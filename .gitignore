@@ -7,3 +7,6 @@ dist/
 
 # upstream protocol clone (vendor source; never committed)
 .upstream/
+
+# local Claude Code permission overrides (not committed)
+.claude/settings.local.json
