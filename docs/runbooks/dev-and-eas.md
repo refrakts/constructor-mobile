@@ -107,7 +107,18 @@ servers, not in this repo**; `eas build` writes no secrets to the tree.
 *.jks` and `/ios /android`; `credentials.json` is added defensively (only present if
 you opt into *local* credentials). No action needed.
 
-## 7. Notes / deferred
+## 7. EAS Insights (usage analytics)
+
+`expo-insights` is installed. After a build it auto-reports app **cold-start
+usage** (over time, by platform, by app-store version) to the Expo dashboard —
+no code, no `app.json`/plugin change (autolinked on SDK 55), no secrets. View at
+expo.dev → project `mobile` → **Insights**. Free preview.
+
+**Requires a native build — NOT OTA-able.** It activates only in a fresh
+`eas build --profile production` + `eas submit`; an `eas update` will not enable
+it. Bundle it with your next rebuild.
+
+## 8. Notes / deferred
 
 - **Backend gated:** live data (M0, real gateway/WS) deferred until
   `ColeMurray/background-agents@a7b968f` is deployed — TestFlight testers see mock UX.
