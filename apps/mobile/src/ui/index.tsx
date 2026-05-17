@@ -19,6 +19,7 @@ import {
   type TextInputProps,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Stack } from 'expo-router';
 import Constants from 'expo-constants';
 
 import { Colors, Fonts, Spacing } from '@/constants/theme';
@@ -52,24 +53,35 @@ export function Screen({
 }) {
   const c = useThemeColors();
   const Body: React.ElementType = scroll ? ScrollView : View;
+  // The native Stack header (or formSheet chrome) owns the top inset now, so
+  // Screen only guards the bottom (home indicator). `automatic` content inset
+  // lets iOS large titles collapse correctly on scroll.
   return (
-    <SafeAreaView style={[s.flex, { backgroundColor: c.background }]} edges={['top']}>
-      <Body style={s.flex} contentContainerStyle={scroll ? s.scrollPad : undefined}>
+    <SafeAreaView style={[s.flex, { backgroundColor: c.background }]} edges={['bottom']}>
+      <Body
+        style={s.flex}
+        contentContainerStyle={scroll ? s.scrollPad : undefined}
+        contentInsetAdjustmentBehavior={scroll ? 'automatic' : undefined}
+      >
         {children}
       </Body>
     </SafeAreaView>
   );
 }
 
+/**
+ * Bridges into the native UIKit Stack header instead of drawing a second bar.
+ * Screens keep calling `<AppBar title=… right=… />`; it now sets the real
+ * native header title + headerRight (large titles, blur, back-swipe come free).
+ */
 export function AppBar({ title, right }: { title: string; right?: React.ReactNode }) {
-  const c = useThemeColors();
   return (
-    <View style={[s.appbar, { borderBottomColor: c.backgroundSelected }]}>
-      <Text style={[s.appbarTitle, { color: c.text }]} numberOfLines={1}>
-        {title}
-      </Text>
-      {right}
-    </View>
+    <Stack.Screen
+      options={{
+        title,
+        headerRight: right ? () => <>{right}</> : undefined,
+      }}
+    />
   );
 }
 
@@ -228,15 +240,6 @@ export function Loading({ label }: { label?: string }) {
 const s = StyleSheet.create({
   flex: { flex: 1 },
   scrollPad: { paddingBottom: Spacing.six },
-  appbar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.three,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  appbarTitle: { fontSize: 20, fontWeight: '700', fontFamily: Fonts.sans, flex: 1 },
   section: { paddingHorizontal: Spacing.three, paddingTop: Spacing.four },
   sectionTitle: { fontSize: 12, fontWeight: '600', marginBottom: Spacing.two, marginLeft: Spacing.two },
   card: { borderRadius: 12, overflow: 'hidden' },
