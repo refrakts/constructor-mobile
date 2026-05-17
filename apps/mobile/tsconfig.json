@@ -8,6 +8,9 @@
       ],
       "@/assets/*": [
         "./assets/*"
+      ],
+      "@constructor/protocol": [
+        "../../packages/protocol/src/index.ts"
       ]
     }
   },
