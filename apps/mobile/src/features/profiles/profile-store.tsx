@@ -1,23 +1,26 @@
 /**
- * In-memory connection-profile store (Phase-1 profiles slice).
+ * Connection-profile store (profiles slice), persisted via expo-sqlite/kv-store.
  *
  * PLAN-02 model: a profile is `{ id; name; gatewayUrl; wsUrl? }`. The user
  * enters ONLY `name` + `gatewayUrl`; `wsUrl` is discovered later from the
  * gateway's `GET /config` (NOT asked for here). Exactly one profile is active.
  *
- * Persistence is intentionally deferred: `@react-native-async-storage/async-storage`
- * is not installed and secure-store/file-system are out of scope for this slice,
- * so state lives in React state/context only. The public API (add/update/remove/
- * setActive + selectors) is shaped so a persistence backend can be slotted behind
- * it later with zero screen changes.
+ * Persistence: state is hydrated synchronously from `expo-sqlite/kv-store`
+ * (`Storage.getItemSync`) so there is no first-paint flash, and written back on
+ * every change. The public API (add/update/remove/setActive + selectors) is
+ * unchanged, so screens are unaffected by the storage backend.
  */
 import React, {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useReducer,
 } from 'react';
+import { Storage } from 'expo-sqlite/kv-store';
+
+const KV_KEY = 'constructor.profiles.v1';
 
 export type Profile = {
   id: string;
@@ -42,7 +45,6 @@ type Action =
   | { type: 'setActive'; id: string };
 
 let _seq = 0;
-/** Stable enough for an in-memory store (no `expo-crypto` dep pulled in here). */
 function makeId(): string {
   _seq += 1;
   return `p_${Date.now().toString(36)}_${_seq.toString(36)}`;
@@ -57,11 +59,31 @@ const SEED: State = (() => {
   return { profiles: [seed], activeProfileId: seed.id };
 })();
 
+/** Synchronous hydrate; falls back to SEED on missing/corrupt/unavailable. */
+function loadInitialState(): State {
+  try {
+    const raw = Storage.getItemSync(KV_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<State>;
+      if (parsed && Array.isArray(parsed.profiles) && parsed.profiles.length > 0) {
+        const profiles = parsed.profiles as Profile[];
+        const activeProfileId =
+          parsed.activeProfileId && profiles.some((p) => p.id === parsed.activeProfileId)
+            ? parsed.activeProfileId
+            : profiles[0].id;
+        return { profiles, activeProfileId };
+      }
+    }
+  } catch {
+    // missing / corrupt / storage unavailable → seed
+  }
+  return SEED;
+}
+
 function reducer(state: State, action: Action): State {
   switch (action.type) {
     case 'add': {
       const profiles = [...state.profiles, action.profile];
-      // First profile added to an empty store becomes active automatically.
       const activeProfileId = state.activeProfileId ?? action.profile.id;
       return { profiles, activeProfileId };
     }
@@ -72,7 +94,6 @@ function reducer(state: State, action: Action): State {
               ...p,
               name: action.draft.name.trim(),
               gatewayUrl: action.draft.gatewayUrl.trim(),
-              // gatewayUrl changed → any previously discovered wsUrl is stale.
               wsUrl:
                 p.gatewayUrl.trim() === action.draft.gatewayUrl.trim()
                   ? p.wsUrl
@@ -86,7 +107,6 @@ function reducer(state: State, action: Action): State {
       const profiles = state.profiles.filter((p) => p.id !== action.id);
       let activeProfileId = state.activeProfileId;
       if (activeProfileId === action.id) {
-        // Active profile deleted → fall back to the first remaining one.
         activeProfileId = profiles[0]?.id ?? null;
       }
       return { profiles, activeProfileId };
@@ -117,7 +137,17 @@ export function ProfileStoreProvider({
 }: {
   children: React.ReactNode;
 }) {
-  const [state, dispatch] = useReducer(reducer, SEED);
+  const [state, dispatch] = useReducer(reducer, undefined, loadInitialState);
+
+  // Persist on every change. Synchronous + best-effort: a storage failure must
+  // never crash the UI (the in-memory state remains the source of truth).
+  useEffect(() => {
+    try {
+      Storage.setItemSync(KV_KEY, JSON.stringify(state));
+    } catch {
+      // ignore — non-fatal
+    }
+  }, [state]);
 
   const addProfile = useCallback((draft: ProfileDraft): Profile => {
     const profile: Profile = {
@@ -162,10 +192,6 @@ export function ProfileStoreProvider({
   );
 }
 
-/**
- * Access the profile store. The provider is mounted locally by `SettingsScreen`
- * so the slice stays self-contained (no edits to frozen `src/app`/`src/data`).
- */
 export function useProfileStore(): ProfileStore {
   const ctx = useContext(ProfileStoreContext);
   if (!ctx) {
@@ -178,12 +204,6 @@ export function useProfileStore(): ProfileStore {
 
 export type DraftErrors = { name?: string; gatewayUrl?: string };
 
-/**
- * Validate the user-entered draft. Only `name` + `gatewayUrl` are user-owned.
- * URL rules are deliberately lenient-but-real: must parse as a URL with an
- * http(s) scheme and a host (the gateway is an HTTP origin per PLAN-02; `wsUrl`
- * is derived server-side, never typed here).
- */
 export function validateDraft(draft: ProfileDraft): DraftErrors {
   const errors: DraftErrors = {};
 

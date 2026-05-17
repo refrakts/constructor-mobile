@@ -7,8 +7,9 @@
  *  expo-linear-gradient / react-native-svg (not in the manifest, no new deps). */
 import React from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
-import { Stack, useRouter } from 'expo-router';
+import { Stack } from 'expo-router';
 
+import { useAuth } from '@/data/auth';
 import { Button, Screen, useThemeColors } from '@/ui';
 import { Fonts, Spacing } from '@/constants/theme';
 
@@ -18,7 +19,7 @@ import { GitHubMark } from './github-mark';
 const ACCENT = '#208AEF';
 
 export function SignInScreen() {
-  const router = useRouter();
+  const { signIn } = useAuth();
   const c = useThemeColors();
   const [signingIn, setSigningIn] = React.useState(false);
 
@@ -32,8 +33,10 @@ export function SignInScreen() {
   const onContinue = React.useCallback(() => {
     if (signingIn) return;
     setSigningIn(true);
-    timer.current = setTimeout(() => router.replace('/'), 550);
-  }, [router, signingIn]);
+    // Flip mock auth; the router's Stack.Protected gate reveals the app and
+    // resolves to the `index` anchor.
+    timer.current = setTimeout(signIn, 550);
+  }, [signIn, signingIn]);
 
   return (
     <Screen>
