@@ -1,74 +1,122 @@
-# Runbook — Running, TestFlight, and OTA updates
+# Runbook — Running, TestFlight, OTA, Metadata
 
-Branch `build/mobile-ui`. Mobile app: `apps/mobile` (Expo SDK 55, pnpm monorepo).
-Bundle ID: `dev.nejc.constructor` (in `app.json`). EAS project owner: `refrakts`.
+Branch `build/mobile-ui`. App: `apps/mobile` (Expo SDK 55, pnpm monorepo).
+Bundle ID: `dev.nejc.constructor`. EAS owner: **your personal Expo account** (the
+old `refrakts` owner/projectId were removed — see §2).
 
 ---
 
-## 1. Quick look — Expo Go (no account needed)
+## 1. Quick look — Expo Go (mock preview only)
 
 ```bash
-cd apps/mobile && pnpm start         # add --tunnel if phone/Mac not on same Wi-Fi
+cd apps/mobile && pnpm start          # --tunnel if phone/Mac not on same Wi-Fi
 ```
-Expo Go (App Store) → scan QR. Mock data; plain-RN UI (`@expo/ui` SwiftUI does not render in Expo Go). Profiles persist via expo-sqlite/kv-store.
+Expo Go → scan QR. **This is a throwaway preview, never the deliverable:** Expo Go is
+a precompiled sandbox — it ignores most of `app.json`, can't run custom native code
+(`@expo/ui` SwiftUI doesn't render), and doesn't reflect production. The real artifact
+is the TestFlight build (§3). Mock data; profiles persist via expo-sqlite/kv-store.
 
-## 2. TestFlight (the chosen distribution) + OTA
+## 2. First-time EAS setup (personal account)
 
-A TestFlight build is a **release/store build**: it runs the *embedded* JS bundle (no Metro / no `pnpm start`) and receives JS changes via **OTA** (`expo-updates`, already provisioned).
+`app.json` no longer pins `owner`/`projectId`/`updates.url` (they were the `refrakts`
+project's). Create the project under your account:
 
-**Prerequisites**
-- Apple Developer Program — active (✓ renews 2026-10-24).
-- `eas login` with an Expo account that has access to `owner: "refrakts"`. If not: join that Expo org, or `npx eas-cli@latest init` to re-create the project under your account (then update `app.json` → `updates.url` to `https://u.expo.dev/<new-projectId>`).
-- **Confirm the bundle identifier** `dev.nejc.constructor` *before the first submit* — it is permanent in App Store Connect. Change in `app.json` → `ios.bundleIdentifier` if you want something else.
-
-**Build → submit (run from `apps/mobile`)**
 ```bash
 cd apps/mobile
-npx eas-cli@latest login
-npx eas-cli@latest build --profile production --platform ios     # store-signed; build number auto-increments (remote)
-npx eas-cli@latest submit --profile production --platform ios     # uploads to App Store Connect → TestFlight
+npx eas-cli@latest login                 # your personal Expo account
+npx eas-cli@latest init                   # creates a NEW project under your account,
+                                          # writes extra.eas.projectId (+ owner)
+npx eas-cli@latest update:configure       # re-adds updates.url for the new project
+                                          # (keep runtimeVersion: fingerprint)
 ```
-- At the build prompt choose **"Let EAS manage credentials."**
-- `eas submit` will offer to **create the App Store Connect app record** if it doesn't exist (needs your Apple login or an ASC API key — EAS walks you through it). It does **not** publish to the public App Store; it only puts the build in TestFlight.
-- Apple processes the build (~5–15 min). Then in **App Store Connect → TestFlight**: add **Internal Testers** (up to 100, immediate, no review) or External Testers (first build needs a ~1‑day beta review).
-- Monorepo is handled: run from `apps/mobile`; EAS uploads the git repo from root (so `packages/protocol` is included, `.upstream/` is gitignored and not uploaded) and uses the pinned pnpm (`packageManager` in root `package.json`).
+After this, commit the regenerated `app.json` (`projectId`/`updates.url` are not
+secrets).
 
-> The expo.dev "Create your first build" wizard just means no builds exist yet — the CLI above is the path; ignore the website wizard.
+## 3. TestFlight (release build, not public App Store)
 
-### Optional: faster local iteration (dev client)
-For day-to-day dev you don't want a TestFlight round-trip. Build the dev client once and use Metro:
+A TestFlight build is a **store/release build**: it runs the *embedded* JS bundle
+(no Metro / no `pnpm start`) and is updated via OTA (§4). Your Apple Developer
+account is active; `infoPlist.ITSAppUsesNonExemptEncryption=false` is set so the
+export-compliance question is auto-answered.
+
 ```bash
-npx eas-cli@latest device:create                                  # register your iPhone (one-time)
-npx eas-cli@latest build --profile development --platform ios      # dev client
-# install via the QR, then:
-cd apps/mobile && pnpm start                                       # JS over Metro, full SwiftUI on device
+cd apps/mobile
+npx eas-cli@latest build  --profile production --platform ios   # store-signed; build # auto-increments
+npx eas-cli@latest submit --profile production --platform ios   # → App Store Connect → TestFlight
+```
+- Pick **"Let EAS manage credentials."** `eas submit` offers to **create the App
+  Store Connect app record** if missing — that's expected; it does **not** publish
+  to the public App Store (TestFlight only).
+- Apple processes ~5–15 min → **App Store Connect → TestFlight** → add **Internal
+  Testers** (≤100, immediate, no review) or External (first build ~1‑day review).
+- Monorepo handled: run from `apps/mobile`; EAS uploads the git repo from root
+  (`packages/protocol` included, `.upstream/` gitignored so not uploaded), pinned
+  pnpm via root `packageManager`.
+
+### Optional: dev client for fast local iteration
+```bash
+npx eas-cli@latest device:create                                # register iPhone (one-time)
+npx eas-cli@latest build --profile development --platform ios    # dev client
+# install via QR, then: cd apps/mobile && pnpm start             # JS over Metro, full SwiftUI
 ```
 
-## 3. OTA updates — works on TestFlight (and dev/internal) builds
+## 4. OTA updates — works on TestFlight builds
 
-Provisioned: `app.json` has `runtimeVersion.policy = "fingerprint"` + `updates.url`; `eas.json` build profiles carry a `channel`. The `production` profile (TestFlight) embeds channel **`production`**.
+`runtimeVersion: fingerprint` + `updates.url` (set by §2) + the `production`
+channel are embedded in the TestFlight build. Push JS/asset changes with **no new
+build/upload**:
 
-Push a JS/asset change to all TestFlight testers **without a new build**:
 ```bash
 cd apps/mobile
 npx eas-cli@latest update --branch production --environment production -m "what changed"
+# first time, if not auto-linked: eas channel:edit production --branch production
 ```
-- First time, link channel→branch if not auto: `npx eas-cli@latest channel:edit production --branch production`.
-- Testers receive it on the **next cold launch** (expo-updates downloads in the background and applies on the following launch — Apple permits this for TestFlight/App Store).
-- **`--environment` is required on SDK 55** or `eas update` errors.
-- **Fingerprint caveat (the rule that matters):** OTA only covers JS/asset changes. Any *native* change (new/upgraded native module, app config affecting native) bumps the runtime fingerprint → existing TestFlight builds will **not** pick it up; you must `eas build` + `eas submit` a new TestFlight build. Expect frequent fingerprint bumps through M1–M2 (`@expo/ui` alpha); OTA value rises at M3+ once native deps settle.
+- Testers get it on the **next cold launch** (downloads in background, applies next
+  launch — Apple permits this for TestFlight/App Store).
+- **`--environment` is required on SDK 55** or it errors.
+- **Fingerprint caveat:** OTA only covers JS/asset changes. Any *native* change
+  (new/upgraded native module, native config) bumps the fingerprint → existing
+  TestFlight builds won't pick it up; rebuild + resubmit. Frequent through M1–M2
+  (`@expo/ui` alpha); OTA value rises at M3+.
+- Rollout/rollback (M5): `--rollout-percentage`, `update:edit`,
+  `update:revert-update-rollout`. One active rollout per branch/channel.
 
-### Staged rollout / rollback (M5)
-```bash
-npx eas-cli@latest update --branch production --environment production --rollout-percentage 10 -m "..."
-npx eas-cli@latest update:edit                       # widen
-npx eas-cli@latest update:revert-update-rollout      # abort: republish previous
-```
-One active rollout per branch/channel at a time. Code signing for updates (`--private-key-path`) is optional — reasonable to defer (single-tenant trust model; revisit M5).
+## 5. EAS Metadata (optional — App Store listing as code)
 
-## 4. Notes / deferred
+`eas metadata` manages **App Store Connect listing metadata** (name, subtitle,
+description, keywords, categories, review info) via a `store.config.json`. iOS only.
 
-- **Backend is gated:** live data path (M0 contract spike, real gateway/WS) deferred until `ColeMurray/background-agents@a7b968f` is deployed. App runs entirely on the mock gateway until then — TestFlight testers see the mock UX.
-- Promote TestFlight → public App Store later = a button in App Store Connect, **no rebuild** (out of scope per your "not actual appstore").
-- The `development` channel was added to `eas.json` by hand (`eas update:configure` only sets `preview`/`production`).
-- Speed tip: enable EAS **Remote Build Cache** in `app.json` so JS-only changes don't force a native rebuild (fingerprint-matched prebuilt binaries — see Expo docs).
+- **Not needed for internal TestFlight testing** — internal testers don't require a
+  store listing. It matters for **external** TestFlight (beta review) and a future
+  App Store submission.
+- Recommended workflow (after the first `eas submit` creates the ASC app):
+  ```bash
+  npx eas-cli@latest metadata:pull     # scaffolds a schema-correct store.config.json from ASC
+  # edit store.config.json
+  npx eas-cli@latest metadata:push     # validates + pushes to App Store Connect
+  ```
+  Don't hand-author `store.config.json` (pull generates the correct schema). It
+  contains only listing text — **no secrets — safe to commit**. Re-run
+  `metadata:pull` after any dashboard edit to avoid overwrites.
+
+## 6. Credentials & gitignore (your question)
+
+**Nothing leaks by default.** With EAS-managed (remote) credentials — the default,
+what we use — the APNs **push key**, distribution cert, and provisioning profile are
+generated and stored **on Expo's servers, not in this repo**. `eas build`/`eas
+credentials` write no secrets into the working tree.
+
+Defensive coverage is already in place: `apps/mobile/.gitignore` ignores
+`*.p8 *.p12 *.mobileprovision *.key *.pem *.jks` and `/ios /android`; I added
+`credentials.json` (only ever present if you opt into *local* credentials). So:
+**no action needed** — pushing/signing keys cannot be accidentally committed.
+
+## 7. Notes / deferred
+
+- **Backend gated:** live data (M0, real gateway/WS) deferred until
+  `ColeMurray/background-agents@a7b968f` is deployed. TestFlight testers see the mock
+  UX until then.
+- TestFlight → public App Store later = a button in App Store Connect, no rebuild
+  (out of scope per "not actual appstore").
+- Speed tip: EAS **Remote Build Cache** in `app.json` avoids native rebuilds for
+  JS-only changes (fingerprint-matched prebuilt binaries — see Expo docs).

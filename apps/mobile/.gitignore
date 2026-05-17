@@ -9,7 +9,8 @@ dist/
 web-build/
 expo-env.d.ts
 
-# Native
+# Native / EAS credentials (EAS-managed creds live on Expo servers, not here;
+# these patterns are belt-and-suspenders for local-credential or exported keys)
 .kotlin/
 *.orig.*
 *.jks
@@ -17,6 +18,7 @@ expo-env.d.ts
 *.p12
 *.key
 *.mobileprovision
+credentials.json
 
 # Metro
 .metro-health-check*

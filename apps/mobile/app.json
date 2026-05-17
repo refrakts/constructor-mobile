@@ -10,12 +10,12 @@
     "runtimeVersion": {
       "policy": "fingerprint"
     },
-    "updates": {
-      "url": "https://u.expo.dev/00d6ac0f-2366-4d7e-843c-20cf79f4ea7d"
-    },
     "ios": {
       "icon": "./assets/expo.icon",
-      "bundleIdentifier": "dev.nejc.constructor"
+      "bundleIdentifier": "dev.nejc.constructor",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -51,11 +51,7 @@
       "reactCompiler": true
     },
     "extra": {
-      "router": {},
-      "eas": {
-        "projectId": "00d6ac0f-2366-4d7e-843c-20cf79f4ea7d"
-      }
-    },
-    "owner": "refrakts"
+      "router": {}
+    }
   }
 }
