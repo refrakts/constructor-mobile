@@ -22,9 +22,13 @@ function StackNav() {
   return (
     <Stack
       screenOptions={{
-        // The app renders its own `AppBar` on every screen; the native Stack
-        // header would be a redundant second title bar + dead top space.
-        headerShown: false,
+        // Native UIKit header (react-native-screens): large titles, blur,
+        // native back-swipe. `AppBar` bridges title/actions into it.
+        headerShown: true,
+        headerLargeTitle: true,
+        headerStyle: { backgroundColor: c.background },
+        headerTintColor: c.text,
+        headerShadowVisible: false,
         contentStyle: { backgroundColor: c.background },
       }}
     >
