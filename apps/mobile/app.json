@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "mobile",
+    "name": "Constructor",
     "slug": "mobile",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -14,7 +14,8 @@
       "url": "https://u.expo.dev/00d6ac0f-2366-4d7e-843c-20cf79f4ea7d"
     },
     "ios": {
-      "icon": "./assets/expo.icon"
+      "icon": "./assets/expo.icon",
+      "bundleIdentifier": "dev.nejc.constructor"
     },
     "android": {
       "adaptiveIcon": {
