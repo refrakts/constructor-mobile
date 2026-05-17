@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import type { SessionGateway } from './gateway';
 import { MockSessionGateway } from './mock/mock-gateway';
+import { AuthProvider } from './auth';
 
 const GatewayContext = createContext<SessionGateway | null>(null);
 
@@ -25,7 +26,9 @@ export function AppProviders({
   const gw = useMemo(() => gateway ?? new MockSessionGateway(), [gateway]);
   return (
     <QueryClientProvider client={client}>
-      <GatewayContext.Provider value={gw}>{children}</GatewayContext.Provider>
+      <AuthProvider>
+        <GatewayContext.Provider value={gw}>{children}</GatewayContext.Provider>
+      </AuthProvider>
     </QueryClientProvider>
   );
 }
