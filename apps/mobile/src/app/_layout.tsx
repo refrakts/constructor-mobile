@@ -22,9 +22,9 @@ function StackNav() {
   return (
     <Stack
       screenOptions={{
-        headerStyle: { backgroundColor: c.background },
-        headerTintColor: c.text,
-        headerShadowVisible: false,
+        // The app renders its own `AppBar` on every screen; the native Stack
+        // header would be a redundant second title bar + dead top space.
+        headerShown: false,
         contentStyle: { backgroundColor: c.background },
       }}
     >
