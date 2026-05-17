@@ -4,3 +4,46 @@ dist/
 .wrangler/
 *.log
 .DS_Store
+
+# upstream protocol clone (vendor source; never committed)
+.upstream/
+
+# local Claude Code permission overrides (not committed)
+.claude/settings.local.json
+
+# --- secrets & credentials (repo-wide; never commit) ---
+.env
+.env.*
+!.env.example
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+*.pem
+*.key
+*.p8
+*.p12
+*.pfx
+*.cer
+*.certSigningRequest
+*.mobileprovision
+*.keystore
+*.jks
+credentials.json
+secrets.json
+*.secret
+google-services.json
+GoogleService-Info.plist
+
+# --- terraform (state + tfvars hold secrets; never commit) ---
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+*.tfstate
+*.tfstate.*
+.terraform/
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
