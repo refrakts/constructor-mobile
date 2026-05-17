@@ -23,7 +23,6 @@ import {
   Text,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 
 import type { Session, SessionStatus } from '@constructor/protocol';
@@ -206,8 +205,7 @@ export function SessionListScreen() {
       {showInitialLoading ? (
         <Loading label="Loading sessions…" />
       ) : (
-        <SafeAreaView style={s.flex} edges={['bottom']}>
-          <ScrollView
+        <ScrollView
             style={s.flex}
             contentContainerStyle={[s.content, fillCenter && s.contentFill]}
             showsVerticalScrollIndicator={false}
@@ -246,7 +244,6 @@ export function SessionListScreen() {
               ))
             )}
           </ScrollView>
-        </SafeAreaView>
       )}
     </Screen>
   );

@@ -58,11 +58,7 @@ export function Screen({
   // lets iOS large titles collapse correctly on scroll.
   return (
     <SafeAreaView style={[s.flex, { backgroundColor: c.background }]} edges={['bottom']}>
-      <Body
-        style={s.flex}
-        contentContainerStyle={scroll ? s.scrollPad : undefined}
-        contentInsetAdjustmentBehavior={scroll ? 'automatic' : undefined}
-      >
+      <Body style={s.flex} contentContainerStyle={scroll ? s.scrollPad : undefined}>
         {children}
       </Body>
     </SafeAreaView>

@@ -25,7 +25,6 @@ function StackNav() {
         // Native UIKit header (react-native-screens): large titles, blur,
         // native back-swipe. `AppBar` bridges title/actions into it.
         headerShown: true,
-        headerLargeTitle: true,
         headerStyle: { backgroundColor: c.background },
         headerTintColor: c.text,
         headerShadowVisible: false,
