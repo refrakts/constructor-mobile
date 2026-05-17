@@ -51,7 +51,14 @@
       "reactCompiler": true
     },
     "extra": {
-      "router": {}
+      "router": {},
+      "eas": {
+        "projectId": "00d6ac0f-2366-4d7e-843c-20cf79f4ea7d"
+      }
+    },
+    "owner": "refrakts",
+    "updates": {
+      "url": "https://u.expo.dev/00d6ac0f-2366-4d7e-843c-20cf79f4ea7d"
     }
   }
 }
