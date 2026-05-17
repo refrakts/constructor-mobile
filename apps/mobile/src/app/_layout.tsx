@@ -1,16 +1,32 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import React from 'react';
-import { useColorScheme } from 'react-native';
+import { Stack } from 'expo-router';
 
-import { AnimatedSplashOverlay } from '@/components/animated-icon';
-import AppTabs from '@/components/app-tabs';
+import { AppProviders } from '@/data/provider';
+import { useThemeColors } from '@/ui';
 
-export default function TabLayout() {
-  const colorScheme = useColorScheme();
+function StackNav() {
+  const c = useThemeColors();
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <AnimatedSplashOverlay />
-      <AppTabs />
-    </ThemeProvider>
+    <Stack
+      screenOptions={{
+        headerStyle: { backgroundColor: c.background },
+        headerTintColor: c.text,
+        headerShadowVisible: false,
+        contentStyle: { backgroundColor: c.background },
+      }}
+    >
+      <Stack.Screen name="index" options={{ title: 'Sessions' }} />
+      <Stack.Screen name="new" options={{ title: 'New session', presentation: 'modal' }} />
+      <Stack.Screen name="s/[id]" options={{ title: 'Session' }} />
+      <Stack.Screen name="sign-in" options={{ title: 'Sign in', presentation: 'modal' }} />
+      <Stack.Screen name="settings" options={{ title: 'Settings' }} />
+    </Stack>
+  );
+}
+
+export default function RootLayout() {
+  return (
+    <AppProviders>
+      <StackNav />
+    </AppProviders>
   );
 }

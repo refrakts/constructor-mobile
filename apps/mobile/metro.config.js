@@ -9,4 +9,10 @@ config.resolver.nodeModulesPaths = [
   path.resolve(workspaceRoot, "node_modules"),
 ];
 config.resolver.disableHierarchicalLookup = true;
+// markdown-it (via react-native-markdown-display) requires Node's "punycode";
+// alias it to the userland package so Metro can resolve it in RN/Hermes.
+config.resolver.extraNodeModules = {
+  ...config.resolver.extraNodeModules,
+  punycode: require.resolve("punycode/"),
+};
 module.exports = config;
