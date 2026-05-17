@@ -33,3 +33,17 @@ secrets.json
 *.secret
 google-services.json
 GoogleService-Info.plist
+
+# --- terraform (state + tfvars hold secrets; never commit) ---
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+*.tfstate
+*.tfstate.*
+.terraform/
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
