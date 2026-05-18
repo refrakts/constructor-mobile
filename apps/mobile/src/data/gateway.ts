@@ -34,8 +34,14 @@ export interface StreamHandle {
   unsubscribe(): void;
 }
 
+export interface ListSessionsResult {
+  sessions: Session[];
+  total: number;
+  hasMore: boolean;
+}
+
 export interface SessionGateway {
-  listSessions(): Promise<Session[]>;
+  listSessions(): Promise<ListSessionsResult>;
   getSession(id: string): Promise<SessionState>;
   createSession(req: CreateSessionRequest): Promise<{ sessionId: string }>;
   /** Mirrors the real DO: a `snapshot` (state + replay) then a live event stream. */

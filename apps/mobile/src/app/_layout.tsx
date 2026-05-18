@@ -2,6 +2,7 @@ import { Stack } from 'expo-router';
 
 import { useAuth } from '@/data/auth';
 import { AppProviders } from '@/data/provider';
+import { ProfileStoreProvider, useProfileStore } from '@/features/profiles/profile-store';
 import { useThemeColors } from '@/ui';
 
 /** Fallback route Expo Router resolves to when a guard redirects. */
@@ -22,8 +23,6 @@ function StackNav() {
   return (
     <Stack
       screenOptions={{
-        // Native UIKit header (react-native-screens): large titles, blur,
-        // native back-swipe. `AppBar` bridges title/actions into it.
         headerShown: true,
         headerStyle: { backgroundColor: c.background },
         headerTintColor: c.text,
@@ -47,10 +46,21 @@ function StackNav() {
   );
 }
 
+function Providers({ children }: { children: React.ReactNode }) {
+  const { activeProfile } = useProfileStore();
+  return (
+    <AppProviders gatewayUrl={activeProfile?.gatewayUrl}>
+      {children}
+    </AppProviders>
+  );
+}
+
 export default function RootLayout() {
   return (
-    <AppProviders>
-      <StackNav />
-    </AppProviders>
+    <ProfileStoreProvider>
+      <Providers>
+        <StackNav />
+      </Providers>
+    </ProfileStoreProvider>
   );
 }

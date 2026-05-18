@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import type { CreateSessionRequest, SandboxEvent, SessionState } from '@constructor/protocol';
-import { costDelta, foldEvent, type PendingRef } from '@/features/sessions/stream/transforms';
+import { costDelta, foldEvent, type PendingRef, type PendingToken } from '@/features/sessions/stream/transforms';
 
 import { useGateway } from './provider';
 
@@ -12,7 +12,13 @@ export { useGateway } from './provider';
 
 export function useSessions() {
   const gw = useGateway();
-  return useQuery({ queryKey: ['sessions'], queryFn: () => gw.listSessions() });
+  return useQuery({
+    queryKey: ['sessions'],
+    queryFn: async () => {
+      const result = await gw.listSessions();
+      return result.sessions;
+    },
+  });
 }
 
 export function useSession(id: string) {
@@ -44,7 +50,7 @@ export function useSessionStream(id: string): SessionStream {
   const [state, setState] = useState<SessionState | null>(null);
   const [events, setEvents] = useState<SandboxEvent[]>([]);
   const [cost, setCost] = useState(0);
-  const pending = useRef<PendingRef['current']>(null) as PendingRef;
+  const pending = useRef<PendingToken | null>(null);
 
   useEffect(() => {
     if (!id) return;

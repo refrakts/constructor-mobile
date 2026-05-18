@@ -2,16 +2,16 @@
  *  implement later — screens never know which one is wired. */
 import type { CreateSessionRequest, Session, SessionState } from '@constructor/protocol';
 
-import type { SessionGateway, StreamHandle, StreamListeners, SubscribeSnapshot } from '../gateway';
+import type { ListSessionsResult, SessionGateway, StreamHandle, StreamListeners, SubscribeSnapshot } from '../gateway';
 import { startScriptedStream } from './emitter';
 import { mockSessionState, mockSessions, scenarioError, scenarioHappy } from './fixtures';
 
 export class MockSessionGateway implements SessionGateway {
   private sessions: Session[] = [...mockSessions];
 
-  async listSessions(): Promise<Session[]> {
+  async listSessions(): Promise<ListSessionsResult> {
     await tick();
-    return [...this.sessions];
+    return { sessions: [...this.sessions], total: this.sessions.length, hasMore: false };
   }
 
   async getSession(id: string): Promise<SessionState> {

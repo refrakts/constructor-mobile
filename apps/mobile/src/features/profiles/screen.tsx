@@ -151,11 +151,32 @@ function ConnectionsList({
 // --- add -------------------------------------------------------------------
 
 function AddConnection({ onDone }: { onDone: () => void }) {
-  const { addProfile } = useProfileStore();
+  const { addProfile, setProfileConfig } = useProfileStore();
+  const [fetching, setFetching] = React.useState(false);
 
-  const handleSubmit = (draft: ProfileDraft) => {
-    addProfile(draft);
-    onDone();
+  const handleSubmit = async (draft: ProfileDraft) => {
+    const profile = addProfile(draft);
+    setFetching(true);
+    try {
+      const url = draft.gatewayUrl.trim().replace(/\/$/, '');
+      const res = await fetch(`${url}/config`, {
+        headers: { Accept: 'application/json' },
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { wsUrl?: string; githubOAuthClientId?: string };
+        if (data.wsUrl && data.githubOAuthClientId) {
+          setProfileConfig(profile.id, {
+            wsUrl: data.wsUrl,
+            githubOAuthClientId: data.githubOAuthClientId,
+          });
+        }
+      }
+    } catch {
+      // ignore — non-fatal, user can retry later
+    } finally {
+      setFetching(false);
+      onDone();
+    }
   };
 
   return (
@@ -163,7 +184,7 @@ function AddConnection({ onDone }: { onDone: () => void }) {
       <AppBar title="Add connection" />
       <ProfileForm
         mode="add"
-        submitLabel="Save connection"
+        submitLabel={fetching ? 'Discovering…' : 'Save connection'}
         onSubmit={handleSubmit}
         onCancel={onDone}
       />

@@ -20,7 +20,6 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack } from 'expo-router';
-import Constants from 'expo-constants';
 
 import { Colors, Fonts, Spacing } from '@/constants/theme';
 
@@ -29,19 +28,6 @@ export type Palette = Record<keyof typeof Colors.light, string>;
 export function useThemeColors(): Palette {
   return (useColorScheme() === 'dark' ? Colors.dark : Colors.light) as Palette;
 }
-
-// --- @expo/ui capability shim ---------------------------------------------
-export const isExpoGo = Constants.appOwnership === 'expo';
-let _swiftUI: typeof import('@expo/ui/swift-ui') | null = null;
-if (!isExpoGo) {
-  try {
-    _swiftUI = require('@expo/ui/swift-ui');
-  } catch {
-    _swiftUI = null;
-  }
-}
-/** Opt-in SwiftUI surface. `available` is false in Expo Go — always branch on it. */
-export const nativeUI = { available: !!_swiftUI, swiftUI: _swiftUI } as const;
 
 // --- primitives ------------------------------------------------------------
 export function Screen({
