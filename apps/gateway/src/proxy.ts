@@ -112,7 +112,7 @@ function enrichBody(body: unknown, user: {
 	scmUserId: string;
 	scmLogin: string;
 	scmName: string;
-	scmEmail: string;
+	scmEmail: string | null;
 	scmToken: string;
 }): unknown {
 	if (body && typeof body === "object") {

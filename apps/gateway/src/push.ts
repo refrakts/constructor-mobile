@@ -1,5 +1,5 @@
 import type { SandboxEvent, Session } from "@constructor/protocol";
-import type { JwtPayload } from "./auth";
+import type { AuthenticatedUser } from "./auth";
 import { verifyAppJwt } from "./auth";
 import { errorResponse, json } from "./index";
 import { internalAuthHeaders } from "./internal-auth";
@@ -20,13 +20,13 @@ type TrackedSession = {
 	cursor: { timestamp: number; id: string } | null;
 	notified: Record<string, true>;
 };
-type UserRegistry = { user: Pick<JwtPayload, "sub" | "scmLogin" | "scmName" | "scmEmail">; devices: Device[]; sessions: Record<string, TrackedSession> };
+type UserRegistry = { user: Pick<AuthenticatedUser, "sub" | "scmLogin" | "scmName" | "scmEmail">; devices: Device[]; sessions: Record<string, TrackedSession> };
 
 function userKey(userId: string): string {
 	return `user:${userId}`;
 }
 
-async function loadRegistry(env: GatewayEnv, user: JwtPayload): Promise<UserRegistry> {
+async function loadRegistry(env: GatewayEnv, user: AuthenticatedUser): Promise<UserRegistry> {
 	const raw = await env.GATEWAY_KV.get(userKey(user.sub));
 	if (raw) return JSON.parse(raw) as UserRegistry;
 	return {
@@ -61,7 +61,7 @@ export async function handlePushRegister(request: Request, env: GatewayEnv): Pro
 	return json({ ok: true });
 }
 
-export async function recordUserSessions(env: GatewayEnv, user: JwtPayload, body: unknown): Promise<void> {
+export async function recordUserSessions(env: GatewayEnv, user: AuthenticatedUser, body: unknown): Promise<void> {
 	const sessions = Array.isArray((body as { sessions?: unknown }).sessions) ? (body as { sessions: Session[] }).sessions : [];
 	if (sessions.length === 0) return;
 	const registry = await loadRegistry(env, user);
