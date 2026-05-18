@@ -18,6 +18,7 @@ import React, {
   useMemo,
   useReducer,
 } from 'react';
+import { randomUUID } from 'expo-crypto';
 import { Storage } from 'expo-sqlite/kv-store';
 
 const KV_KEY = 'constructor.profiles.v1';
@@ -49,8 +50,6 @@ type Action =
   | { type: 'setConfig'; id: string; config: ProfileConfig }
   | { type: 'remove'; id: string }
   | { type: 'setActive'; id: string };
-
-import { randomUUID } from 'expo-crypto';
 
 function makeId(): string {
   return `p_${randomUUID()}`;
@@ -103,6 +102,10 @@ function reducer(state: State, action: Action): State {
               wsUrl:
                 p.gatewayUrl.trim() === action.draft.gatewayUrl.trim()
                   ? p.wsUrl
+                  : undefined,
+              githubOAuthClientId:
+                p.gatewayUrl.trim() === action.draft.gatewayUrl.trim()
+                  ? p.githubOAuthClientId
                   : undefined,
             }
           : p,

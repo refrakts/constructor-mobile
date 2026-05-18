@@ -35,9 +35,15 @@ variable "compatibility_flags" {
 }
 
 variable "push_cron" {
-  description = "Cron schedule(s) for the gateway push cron-poll (PLAN-03). Empty = disabled."
+  description = "Cron schedule(s) for the gateway scheduled handler. Empty = disabled."
   type        = list(string)
   default     = ["*/2 * * * *"]
+}
+
+variable "workers_dev_subdomain" {
+  description = "Cloudflare account workers.dev subdomain, required when gateway_custom_domain is not set"
+  type        = string
+  default     = null
 }
 
 # --- optional custom domain ---------------------------------------------------
@@ -84,12 +90,6 @@ variable "github_oauth_client_secret" {
 
 variable "app_jwt_signing_key" {
   description = "Gateway-owned key used to sign short-lived app-session JWTs"
-  type        = string
-  sensitive   = true
-}
-
-variable "expo_access_token" {
-  description = "Expo access token for sending push notifications"
   type        = string
   sensitive   = true
 }

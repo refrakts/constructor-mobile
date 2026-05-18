@@ -14,6 +14,10 @@ import * as SecureStore from 'expo-secure-store';
 
 const AUTH_KEY = 'constructor.auth_token';
 
+export function authTokenKey(profileId?: string | null): string {
+  return profileId ? `${AUTH_KEY}.${profileId}` : AUTH_KEY;
+}
+
 type AuthUser = {
   sub: string;
   scmLogin: string;
@@ -48,13 +52,16 @@ function parseJwtPayload(token: string): AuthUser | null {
   }
 }
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
+export function AuthProvider({ children, profileId }: { children: React.ReactNode; profileId?: string }) {
   const [token, setToken] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
+  const key = authTokenKey(profileId);
 
   // Hydrate from secure store on mount
   useEffect(() => {
-    SecureStore.getItemAsync(AUTH_KEY)
+    setReady(false);
+    setToken(null);
+    SecureStore.getItemAsync(key)
       .then((t) => {
         if (t) setToken(t);
       })
@@ -62,21 +69,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // ignore
       })
       .finally(() => setReady(true));
-  }, []);
+  }, [key]);
 
   const signIn = useCallback((newToken: string) => {
     setToken(newToken);
-    SecureStore.setItemAsync(AUTH_KEY, newToken).catch(() => {
+    SecureStore.setItemAsync(key, newToken).catch(() => {
       // ignore
     });
-  }, []);
+  }, [key]);
 
   const signOut = useCallback(() => {
     setToken(null);
-    SecureStore.deleteItemAsync(AUTH_KEY).catch(() => {
+    SecureStore.deleteItemAsync(key).catch(() => {
       // ignore
     });
-  }, []);
+  }, [key]);
 
   const user = useMemo(() => (token ? parseJwtPayload(token) : null), [token]);
   const value = useMemo<Auth>(

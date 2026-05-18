@@ -37,8 +37,7 @@ export function ProfileForm({
   const [gatewayUrl, setGatewayUrl] = useState(initial?.gatewayUrl ?? '');
   const [touched, setTouched] = useState(false);
 
-  const draft: ProfileDraft = { name, gatewayUrl };
-  const errors: DraftErrors = useMemo(() => validateDraft(draft), [name, gatewayUrl]);
+  const errors: DraftErrors = useMemo(() => validateDraft({ name, gatewayUrl }), [name, gatewayUrl]);
   const showErrors = touched;
 
   const handleSubmit = () => {

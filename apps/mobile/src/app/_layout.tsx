@@ -30,11 +30,11 @@ function StackNav() {
         contentStyle: { backgroundColor: c.background },
       }}
     >
+      <Stack.Screen name="settings" options={{ title: 'Settings' }} />
       <Stack.Protected guard={signedIn}>
         <Stack.Screen name="index" options={{ title: 'Sessions' }} />
         <Stack.Screen name="new" options={{ title: 'New session', ...SHEET }} />
         <Stack.Screen name="s/[id]" options={{ title: 'Session' }} />
-        <Stack.Screen name="settings" options={{ title: 'Settings' }} />
       </Stack.Protected>
       <Stack.Protected guard={!signedIn}>
         <Stack.Screen
@@ -49,7 +49,11 @@ function StackNav() {
 function Providers({ children }: { children: React.ReactNode }) {
   const { activeProfile } = useProfileStore();
   return (
-    <AppProviders gatewayUrl={activeProfile?.gatewayUrl}>
+    <AppProviders
+      gatewayUrl={activeProfile?.gatewayUrl}
+      profileId={activeProfile?.id}
+      wsUrl={activeProfile?.wsUrl}
+    >
       {children}
     </AppProviders>
   );

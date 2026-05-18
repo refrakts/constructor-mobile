@@ -3,6 +3,7 @@
 
 cloudflare_account_id = ""
 cloudflare_api_token  = "" # Workers Scripts + KV + Routes edit
+workers_dev_subdomain = "" # e.g. your-account-subdomain from *.workers.dev
 
 # Absolute path to this monorepo checkout (for the build local-exec):
 project_root = "<absolute-path-to-this-repo>"
@@ -22,4 +23,3 @@ github_oauth_client_id = ""
 internal_callback_secret   = ""
 github_oauth_client_secret = ""
 app_jwt_signing_key        = ""
-expo_access_token          = ""

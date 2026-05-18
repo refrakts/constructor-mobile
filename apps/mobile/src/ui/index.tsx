@@ -170,7 +170,6 @@ export function Button({
   variant?: 'primary' | 'ghost' | 'destructive';
   disabled?: boolean;
 }) {
-  const c = useThemeColors();
   const bg =
     variant === 'primary' ? '#208AEF' : variant === 'destructive' ? '#E5484D' : 'transparent';
   const fg = variant === 'ghost' ? '#208AEF' : '#ffffff';
