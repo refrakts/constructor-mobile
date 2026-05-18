@@ -24,6 +24,7 @@ export async function handleProxy(request: Request, env: GatewayEnv): Promise<Re
 	// Copy headers and inject HMAC auth
 	const headers = new Headers(request.headers);
 	headers.delete("Authorization"); // remove app JWT
+	stripRequestSpecificHeaders(headers);
 
 	const internalToken = await generateInternalToken(env.INTERNAL_CALLBACK_SECRET);
 	headers.set("Authorization", `Bearer ${internalToken}`);
@@ -53,6 +54,10 @@ export async function handleProxy(request: Request, env: GatewayEnv): Promise<Re
 	});
 
 	const response = await fetch(upstream);
+	const configError = await controlPlaneConfigError(response);
+	if (configError) {
+		return configError;
+	}
 	if (request.method === "GET" && url.pathname === "/sessions" && response.ok) {
 		const cloned = response.clone();
 		await cloned.json().then((body) => recordUserSessions(env, user, body)).catch(() => undefined);
@@ -69,6 +74,37 @@ export async function handleProxy(request: Request, env: GatewayEnv): Promise<Re
 		statusText: response.statusText,
 		headers: responseHeaders,
 	});
+}
+
+function stripRequestSpecificHeaders(headers: Headers): void {
+	for (const header of [
+		"Host",
+		"Connection",
+		"Content-Length",
+		"CF-Connecting-IP",
+		"CF-IPCountry",
+		"CF-Ray",
+		"CF-Visitor",
+		"X-Forwarded-Proto",
+		"X-Real-IP",
+	]) {
+		headers.delete(header);
+	}
+}
+
+async function controlPlaneConfigError(response: Response): Promise<Response | null> {
+	if (response.status !== 404) return null;
+
+	const contentType = response.headers.get("Content-Type") || "";
+	if (!contentType.includes("application/json")) return null;
+
+	const body = await response.clone().json().catch(() => null) as { cloudflare_error?: boolean; error_code?: number; detail?: string } | null;
+	if (!body?.cloudflare_error || body.error_code !== 1042) return null;
+
+	return errorResponse(
+		`Control plane worker is unavailable: ${body.detail ?? "No Workers script was found for the configured host."}`,
+		502,
+	);
 }
 
 function enrichBody(body: unknown, user: {
