@@ -4,6 +4,8 @@
 import React from 'react';
 import { ActivityIndicator, Alert, Linking, StyleSheet, Text, View } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
+import { randomUUID } from 'expo-crypto';
+import * as SecureStore from 'expo-secure-store';
 import * as WebBrowser from 'expo-web-browser';
 
 import { useAuth } from '@/data/auth';
@@ -15,6 +17,7 @@ import { BrandBackdrop } from './brand-backdrop';
 import { GitHubMark } from './github-mark';
 
 const ACCENT = '#208AEF';
+const PENDING_STATE_KEY = 'constructor.auth.pending_state';
 
 export function SignInScreen() {
   const { signIn } = useAuth();
@@ -23,34 +26,37 @@ export function SignInScreen() {
   const { activeProfile } = useProfileStore();
   const [signingIn, setSigningIn] = React.useState(false);
 
+  const finishCallback = React.useCallback(async (url: string) => {
+    if (!url.startsWith('mobile://auth/callback')) return;
+    WebBrowser.dismissBrowser();
+    const parsed = new URL(url);
+    const token = parsed.searchParams.get('token');
+    const state = parsed.searchParams.get('state');
+    const pendingState = await SecureStore.getItemAsync(PENDING_STATE_KEY).catch(() => null);
+    if (!token || !state || !pendingState || state !== pendingState) {
+      Alert.alert('Sign-in failed', 'Could not complete authentication.');
+      setSigningIn(false);
+      return;
+    }
+    await SecureStore.deleteItemAsync(PENDING_STATE_KEY).catch(() => undefined);
+    signIn(token);
+    setSigningIn(false);
+  }, [signIn]);
+
   // Listen for deep-link callback
   React.useEffect(() => {
     const sub = Linking.addEventListener('url', ({ url }) => {
-      if (url.startsWith('mobile://auth/callback')) {
-        WebBrowser.dismissBrowser();
-        const parsed = new URL(url);
-        const token = parsed.searchParams.get('token');
-        if (token) {
-          signIn(token);
-        } else {
-          Alert.alert('Sign-in failed', 'Could not complete authentication.');
-          setSigningIn(false);
-        }
-      }
+      finishCallback(url);
     });
     return () => sub.remove();
-  }, [signIn]);
+  }, [finishCallback]);
 
   // Also check for initial URL (cold-start deep link)
   React.useEffect(() => {
     Linking.getInitialURL().then((url) => {
-      if (url && url.startsWith('mobile://auth/callback')) {
-        const parsed = new URL(url);
-        const token = parsed.searchParams.get('token');
-        if (token) signIn(token);
-      }
+      if (url) finishCallback(url);
     });
-  }, [signIn]);
+  }, [finishCallback]);
 
   const onContinue = React.useCallback(async () => {
     if (!activeProfile) {
@@ -64,8 +70,11 @@ export function SignInScreen() {
     setSigningIn(true);
     try {
       const gatewayUrl = activeProfile.gatewayUrl.replace(/\/$/, '');
-      const authUrl = `${gatewayUrl}/auth/start?redirect_uri=mobile://auth/callback`;
-      await WebBrowser.openBrowserAsync(authUrl);
+      const state = randomUUID();
+      await SecureStore.setItemAsync(PENDING_STATE_KEY, state);
+      const authUrl = `${gatewayUrl}/auth/start?redirect_uri=${encodeURIComponent('mobile://auth/callback')}&state=${encodeURIComponent(state)}`;
+      const result = await WebBrowser.openBrowserAsync(authUrl);
+      if (result.type !== 'opened') setSigningIn(false);
     } catch {
       setSigningIn(false);
     }
@@ -112,6 +121,9 @@ export function SignInScreen() {
             onPress={onContinue}
             disabled={signingIn}
           />
+          {!activeProfile?.githubOAuthClientId ? (
+            <Button title="Open Settings" variant="ghost" onPress={() => router.push('/settings')} />
+          ) : null}
 
           {!activeProfile ? (
             <Text style={[styles.statusCaption, { color: c.textSecondary }]}>

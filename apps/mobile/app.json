@@ -44,7 +44,13 @@
       ],
       "expo-secure-store",
       "expo-web-browser",
-      "expo-sqlite"
+      "expo-sqlite",
+      [
+        "expo-notifications",
+        {
+          "defaultChannel": "session-updates"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

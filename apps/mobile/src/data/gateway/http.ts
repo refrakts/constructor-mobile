@@ -4,11 +4,11 @@
  * on every request so the gateway instance is stateless.
  */
 import * as SecureStore from 'expo-secure-store';
+import { authTokenKey } from '../auth';
 
 import type {
   CreateSessionRequest,
   SandboxEvent,
-  Session,
   SessionState,
 } from '@constructor/protocol';
 import type {
@@ -19,11 +19,9 @@ import type {
   SubscribeSnapshot,
 } from '../gateway';
 
-const AUTH_KEY = 'constructor.auth_token';
-
-async function getToken(): Promise<string | null> {
+async function getToken(key: string): Promise<string | null> {
   try {
-    return await SecureStore.getItemAsync(AUTH_KEY);
+    return await SecureStore.getItemAsync(key);
   } catch {
     return null;
   }
@@ -38,10 +36,14 @@ function buildHeaders(token: string): HeadersInit {
 }
 
 export class HttpSessionGateway implements SessionGateway {
-  constructor(private baseUrl: string) {}
+  constructor(
+    private baseUrl: string,
+    private tokenKey = authTokenKey(),
+    private wsBaseUrl?: string,
+  ) {}
 
   async listSessions(): Promise<ListSessionsResult> {
-    const token = await getToken();
+    const token = await getToken(this.tokenKey);
     if (!token) throw new Error('Not authenticated');
     const res = await fetch(`${this.baseUrl}/sessions`, {
       headers: { Accept: 'application/json', Authorization: `Bearer ${token}` },
@@ -51,7 +53,7 @@ export class HttpSessionGateway implements SessionGateway {
   }
 
   async getSession(id: string): Promise<SessionState> {
-    const token = await getToken();
+    const token = await getToken(this.tokenKey);
     if (!token) throw new Error('Not authenticated');
     const res = await fetch(`${this.baseUrl}/sessions/${id}`, {
       headers: { Accept: 'application/json', Authorization: `Bearer ${token}` },
@@ -61,7 +63,7 @@ export class HttpSessionGateway implements SessionGateway {
   }
 
   async createSession(req: CreateSessionRequest): Promise<{ sessionId: string }> {
-    const token = await getToken();
+    const token = await getToken(this.tokenKey);
     if (!token) throw new Error('Not authenticated');
     const res = await fetch(`${this.baseUrl}/sessions`, {
       method: 'POST',
@@ -80,24 +82,25 @@ export class HttpSessionGateway implements SessionGateway {
     let closed = false;
 
     const connect = async () => {
-      const token = await getToken();
-      if (!token || closed) return;
+      try {
+        const token = await getToken(this.tokenKey);
+        if (!token || closed) return;
 
-      // Fetch WS auth token from gateway
-      const tokenRes = await fetch(`${this.baseUrl}/sessions/${id}/ws-token`, {
-        method: 'POST',
-        headers: buildHeaders(token),
-        body: JSON.stringify({}), // user identity injected by gateway proxy
-      });
-      if (!tokenRes.ok) {
-        on.closed?.('Failed to get WebSocket token');
-        return;
-      }
-      const { token: wsToken } = (await tokenRes.json()) as { token: string };
+        // Fetch WS auth token from gateway
+        const tokenRes = await fetch(`${this.baseUrl}/sessions/${id}/ws-token`, {
+          method: 'POST',
+          headers: buildHeaders(token),
+          body: JSON.stringify({}), // user identity injected by gateway proxy
+        });
+        if (!tokenRes.ok) {
+          on.closed?.('Failed to get WebSocket token');
+          return;
+        }
+        const { token: wsToken } = (await tokenRes.json()) as { token: string };
 
-      // Connect to WS — use wss:// if gateway is https://
-      const wsUrl = this.baseUrl.replace(/^http/, 'ws') + `/sessions/${id}/ws`;
-      ws = new WebSocket(wsUrl);
+        // Connect to the discovered WS endpoint when available.
+        const wsUrl = (this.wsBaseUrl ?? this.baseUrl.replace(/^http/, 'ws')) + `/sessions/${id}/ws`;
+        ws = new WebSocket(wsUrl);
 
       ws.onopen = () => {
         ws?.send(
@@ -131,9 +134,12 @@ export class HttpSessionGateway implements SessionGateway {
         if (!closed) on.closed?.('WebSocket closed');
       };
 
-      ws.onerror = () => {
-        if (!closed) on.closed?.('WebSocket error');
-      };
+        ws.onerror = () => {
+          if (!closed) on.closed?.('WebSocket error');
+        };
+      } catch {
+        if (!closed) on.closed?.('WebSocket connection failed');
+      }
     };
 
     connect();
@@ -147,7 +153,7 @@ export class HttpSessionGateway implements SessionGateway {
   }
 
   async sendFollowUp(id: string, content: string): Promise<void> {
-    const token = await getToken();
+    const token = await getToken(this.tokenKey);
     if (!token) throw new Error('Not authenticated');
     const res = await fetch(`${this.baseUrl}/sessions/${id}/prompt`, {
       method: 'POST',
@@ -158,7 +164,7 @@ export class HttpSessionGateway implements SessionGateway {
   }
 
   async stop(id: string): Promise<void> {
-    const token = await getToken();
+    const token = await getToken(this.tokenKey);
     if (!token) throw new Error('Not authenticated');
     const res = await fetch(`${this.baseUrl}/sessions/${id}/stop`, {
       method: 'POST',

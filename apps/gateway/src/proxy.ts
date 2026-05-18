@@ -1,29 +1,8 @@
 import type { GatewayEnv } from "./types";
-import { errorResponse, json } from "./index";
+import { corsHeaders as defaultCorsHeaders, errorResponse } from "./index";
 import { verifyAppJwt } from "./auth";
-
-const TOKEN_VALIDITY_MS = 5 * 60 * 1000;
-
-async function computeHmacHex(data: string, secret: string): Promise<string> {
-	const encoder = new TextEncoder();
-	const key = await crypto.subtle.importKey(
-		"raw",
-		encoder.encode(secret),
-		{ name: "HMAC", hash: "SHA-256" },
-		false,
-		["sign"]
-	);
-	const sig = await crypto.subtle.sign("HMAC", key, encoder.encode(data));
-	return Array.from(new Uint8Array(sig))
-		.map((b) => b.toString(16).padStart(2, "0"))
-		.join("");
-}
-
-async function generateInternalToken(secret: string): Promise<string> {
-	const timestamp = Date.now().toString();
-	const signatureHex = await computeHmacHex(timestamp, secret);
-	return `${timestamp}.${signatureHex}`;
-}
+import { generateInternalToken } from "./internal-auth";
+import { recordUserSessions } from "./push";
 
 export async function handleProxy(request: Request, env: GatewayEnv): Promise<Response> {
 	const authHeader = request.headers.get("Authorization");
@@ -74,15 +53,21 @@ export async function handleProxy(request: Request, env: GatewayEnv): Promise<Re
 	});
 
 	const response = await fetch(upstream);
+	if (request.method === "GET" && url.pathname === "/sessions" && response.ok) {
+		const cloned = response.clone();
+		await cloned.json().then((body) => recordUserSessions(env, user, body)).catch(() => undefined);
+	}
 
 	// Pass through CORS
-	const corsHeaders = new Headers(response.headers);
-	corsHeaders.set("Access-Control-Allow-Origin", "*");
+	const responseHeaders = new Headers(response.headers);
+	for (const [key, value] of Object.entries(defaultCorsHeaders)) {
+		responseHeaders.set(key, value);
+	}
 
 	return new Response(response.body, {
 		status: response.status,
 		statusText: response.statusText,
-		headers: corsHeaders,
+		headers: responseHeaders,
 	});
 }
 

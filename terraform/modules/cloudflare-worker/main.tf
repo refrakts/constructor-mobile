@@ -80,6 +80,13 @@ resource "cloudflare_workers_custom_domain" "this" {
   zone_id    = var.zone_id
   hostname   = var.custom_domain
   service    = cloudflare_worker.this.name
+
+  lifecycle {
+    precondition {
+      condition     = var.zone_id != null && length(trimspace(var.zone_id)) > 0
+      error_message = "zone_id is required when custom_domain is set."
+    }
+  }
 }
 
 resource "cloudflare_workers_route" "this" {
@@ -88,6 +95,13 @@ resource "cloudflare_workers_route" "this" {
   zone_id = var.zone_id
   pattern = var.route_pattern
   script  = cloudflare_worker.this.name
+
+  lifecycle {
+    precondition {
+      condition     = var.zone_id != null && length(trimspace(var.zone_id)) > 0
+      error_message = "zone_id is required when route_pattern is set."
+    }
+  }
 }
 
 resource "cloudflare_workers_cron_trigger" "this" {

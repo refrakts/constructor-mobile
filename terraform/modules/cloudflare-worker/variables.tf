@@ -9,6 +9,12 @@ variable "zone_id" {
   default     = null
 }
 
+variable "workers_dev_subdomain" {
+  description = "Cloudflare account workers.dev subdomain, used to construct the default worker URL"
+  type        = string
+  default     = null
+}
+
 variable "worker_name" {
   description = "Name of the worker"
   type        = string
@@ -48,7 +54,7 @@ variable "secrets" {
 }
 
 variable "cron_triggers" {
-  description = "Cron expressions for the worker scheduled() handler (push cron-poll)"
+  description = "Cron expressions for the worker scheduled() handler"
   type        = list(string)
   default     = []
 }

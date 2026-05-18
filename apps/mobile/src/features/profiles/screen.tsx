@@ -30,7 +30,6 @@ import { ProfileForm } from './ProfileForm';
 import {
   type Profile,
   type ProfileDraft,
-  ProfileStoreProvider,
   useProfileStore,
 } from './profile-store';
 
@@ -319,11 +318,7 @@ function SettingsScreenInner() {
 }
 
 export function SettingsScreen() {
-  return (
-    <ProfileStoreProvider>
-      <SettingsScreenInner />
-    </ProfileStoreProvider>
-  );
+  return <SettingsScreenInner />;
 }
 
 const styles = StyleSheet.create({

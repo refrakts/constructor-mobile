@@ -4,16 +4,17 @@ import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import type { CreateSessionRequest, SandboxEvent, SessionState } from '@constructor/protocol';
-import { costDelta, foldEvent, type PendingRef, type PendingToken } from '@/features/sessions/stream/transforms';
+import { collapseTokenEvents, costDelta, foldEvent, type PendingToken } from '@/features/sessions/stream/transforms';
 
-import { useGateway } from './provider';
+import { useGateway, useGatewayScope } from './provider';
 
 export { useGateway } from './provider';
 
 export function useSessions() {
   const gw = useGateway();
+  const scope = useGatewayScope();
   return useQuery({
-    queryKey: ['sessions'],
+    queryKey: ['sessions', scope],
     queryFn: async () => {
       const result = await gw.listSessions();
       return result.sessions;
@@ -23,15 +24,17 @@ export function useSessions() {
 
 export function useSession(id: string) {
   const gw = useGateway();
-  return useQuery({ queryKey: ['session', id], queryFn: () => gw.getSession(id), enabled: !!id });
+  const scope = useGatewayScope();
+  return useQuery({ queryKey: ['session', scope, id], queryFn: () => gw.getSession(id), enabled: !!id });
 }
 
 export function useCreateSession() {
   const gw = useGateway();
+  const scope = useGatewayScope();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (req: CreateSessionRequest) => gw.createSession(req),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['sessions'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['sessions', scope] }),
   });
 }
 
@@ -56,11 +59,13 @@ export function useSessionStream(id: string): SessionStream {
     if (!id) return;
     pending.current = null;
     setStatus('connecting');
+    setState(null);
     setEvents([]);
+    setCost(0);
     const handle = gw.subscribe(id, {
       snapshot: (snap) => {
         setState(snap.state);
-        setEvents(snap.replay.events);
+        setEvents(collapseTokenEvents(snap.replay.events, pending));
         setStatus('live');
       },
       event: (e) => {

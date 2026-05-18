@@ -19,11 +19,11 @@ output "deployment_id" {
 }
 
 output "worker_url" {
-  description = "Default workers.dev URL (actual subdomain varies by account)"
-  value       = "https://${cloudflare_worker.this.name}.workers.dev"
+  description = "Default workers.dev URL"
+  value       = var.workers_dev_subdomain != null ? "https://${cloudflare_worker.this.name}.${var.workers_dev_subdomain}.workers.dev" : null
 }
 
 output "custom_domain" {
-  description = "Custom domain (if configured)"
-  value       = var.custom_domain != null ? cloudflare_workers_custom_domain.this[0].hostname : null
+  description = "Custom domain URL (if configured)"
+  value       = var.custom_domain != null ? "https://${cloudflare_workers_custom_domain.this[0].hostname}" : null
 }

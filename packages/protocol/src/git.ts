@@ -36,11 +36,11 @@ export function generateBranchName(sessionId: string, _title?: string): string {
  */
 export function extractSessionIdFromBranch(branchName: string): string | null {
   const prefix = `${BRANCH_PREFIX}/`;
-  const normalizedBranchName = normalizeBranchName(branchName);
-  if (!normalizedBranchName.startsWith(prefix)) {
+  const trimmedBranchName = branchName.trim();
+  if (!trimmedBranchName.toLowerCase().startsWith(prefix)) {
     return null;
   }
-  return normalizedBranchName.slice(prefix.length);
+  return trimmedBranchName.slice(prefix.length);
 }
 
 /**

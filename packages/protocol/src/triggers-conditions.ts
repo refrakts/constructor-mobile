@@ -66,7 +66,8 @@ export function matchesConditions(
   registry: ConditionRegistry
 ): boolean {
   return conditions.every((condition) => {
-    const handler = registry[condition.type] as ConditionHandler<typeof condition.type>;
+    const handler = registry[condition.type as ConditionType] as ConditionHandler<typeof condition.type> | undefined;
+    if (!handler) return false;
     return handler.evaluate(condition, event);
   });
 }
@@ -80,7 +81,11 @@ export function validateConditions(
 ): string[] {
   const errors: string[] = [];
   for (const condition of conditions) {
-    const handler = registry[condition.type] as ConditionHandler<typeof condition.type>;
+    const handler = registry[condition.type as ConditionType] as ConditionHandler<typeof condition.type> | undefined;
+    if (!handler) {
+      errors.push(`Unknown condition type "${condition.type}"`);
+      continue;
+    }
     if (!handler.appliesTo.includes(triggerSource)) {
       errors.push(`Condition "${condition.type}" does not apply to ${triggerSource} triggers`);
       continue;
