@@ -13,6 +13,7 @@ export type GatewayErrorKind =
 	| 'forbidden'
 	| 'not_found'
 	| 'control_plane_unavailable'
+	| 'control_plane_unreachable'
 	| 'control_plane_5xx'
 	| 'upstream_unreachable'
 	| 'bad_request'
@@ -67,6 +68,8 @@ export class GatewayError extends Error {
 				return 'Not found.';
 			case 'control_plane_unavailable':
 				return 'The agent service is currently unavailable.';
+			case 'control_plane_unreachable':
+				return 'Can’t reach the agent service right now.';
 			case 'control_plane_5xx':
 				return 'The agent service hit an error. Try again shortly.';
 			case 'upstream_unreachable':
@@ -98,7 +101,13 @@ export class GatewayError extends Error {
 }
 
 function kindForStatus(status: number, code?: string): GatewayErrorKind {
+	// Prefer the explicit `code` from the gateway envelope — it carries more
+	// signal than the HTTP status (e.g. 502 status can mean either
+	// `control_plane_unavailable` (CF 1042) or `control_plane_5xx`, and 503
+	// can mean either `upstream_unreachable` (fetch threw) or
+	// `control_plane_unreachable` (upstream returned 530)).
 	if (code === 'control_plane_unavailable') return 'control_plane_unavailable';
+	if (code === 'control_plane_unreachable') return 'control_plane_unreachable';
 	if (code === 'control_plane_5xx') return 'control_plane_5xx';
 	if (code === 'upstream_unreachable') return 'upstream_unreachable';
 	if (status === 401) return 'unauthorized';

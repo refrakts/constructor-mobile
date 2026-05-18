@@ -75,6 +75,12 @@ export function AppProviders({
   // Single shared error router for queries + mutations. Avoids a refresh
   // storm by collapsing concurrent 401s into one in-flight refresh.
   const refreshLock = useRef<Promise<boolean> | null>(null);
+  // Populated by an inner <AuthBridge /> rendered under AuthProvider. The
+  // QueryClient onError closure runs *outside* the auth context, so it can't
+  // call useAuth(); we instead reach into this ref. When a refresh fails we
+  // sign out, which flips `signedIn` in AuthContext and the Stack.Protected
+  // guards in `_layout.tsx` send the user to /sign-in.
+  const signOutRef = useRef<(() => void) | null>(null);
 
   const tryRefresh = useMemo(() => {
     return async (): Promise<boolean> => {
@@ -116,6 +122,9 @@ export function AppProviders({
               clientRef.current?.invalidateQueries();
             } else {
               logEvent('warn', 'auth.refresh_failed', meta);
+              // Refresh failed — KV record gone, signing key rotated, etc.
+              // Boot the user back to /sign-in via AuthContext.signOut.
+              signOutRef.current?.();
             }
           });
         }
@@ -158,6 +167,7 @@ export function AppProviders({
         <GatewayScopeContext.Provider value={scope}>
           <ProfileBoot gatewayUrl={gatewayUrl} wsUrl={wsUrl} />
           <UserIdentity />
+          <AuthBridge signOutRef={signOutRef} />
           <GatewayContext.Provider value={gw}>{children}</GatewayContext.Provider>
           <PushRegistration gatewayUrl={gatewayUrl} />
         </GatewayScopeContext.Provider>
@@ -182,6 +192,22 @@ function ProfileBoot({ gatewayUrl, wsUrl }: { gatewayUrl?: string; wsUrl?: strin
       });
     });
   }, [gatewayUrl, wsUrl, fetchConfig]);
+  return null;
+}
+
+/**
+ * Bridges the AuthContext's `signOut` into the QueryClient's onError closure
+ * (which lives outside the AuthProvider tree). Updates the ref on every
+ * render so it always points at the latest stable signOut.
+ */
+function AuthBridge({ signOutRef }: { signOutRef: React.MutableRefObject<(() => void) | null> }) {
+  const { signOut } = useAuth();
+  useEffect(() => {
+    signOutRef.current = signOut;
+    return () => {
+      signOutRef.current = null;
+    };
+  }, [signOut, signOutRef]);
   return null;
 }
 

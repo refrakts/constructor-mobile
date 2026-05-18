@@ -272,9 +272,12 @@ export async function handleAuthRefresh(request: Request, env: GatewayEnv): Prom
 	}
 
 	// 2) Slow path: token expired (but otherwise well-formed and signed by us).
-	// Decode without verification to recover its sessionId, then look up KV.
-	// If KV still holds the record and the JWT signature is valid (ignoring
-	// expiry), we issue a fresh token. Anything else is rejected.
+	// We still call `jwtVerify` — signature, issuer, and audience are all
+	// enforced — but allow up to 7 days past `exp` via a wide `clockTolerance`.
+	// That bounds the offline window without forcing daily re-OAuth, while
+	// keeping the signing key + issuer/audience as the trust root. Anything
+	// that fails signature, iss, or aud is rejected. If KV no longer holds
+	// the session record we also reject (logout invalidates this path).
 	const grace = await refreshFromExpiredToken(env, presented);
 	if (grace) return grace;
 

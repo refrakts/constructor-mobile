@@ -1,10 +1,34 @@
 import type { GatewayEnv } from "./types";
-import { corsHeaders as defaultCorsHeaders, errorResponse, json } from "./index";
+import { corsHeaders as defaultCorsHeaders } from "./index";
 import { verifyAppJwt, type AuthenticatedUser } from "./auth";
 import { generateInternalToken } from "./internal-auth";
 import { recordUserSessions } from "./push";
 import { buildTraceContext, createLogger, errToFields, type Logger } from "./logger";
 import type { Session } from "@constructor/protocol";
+
+/**
+ * Error envelope that mirrors the upstream-error path: every failure response
+ * from the proxy carries a gateway requestId in the body AND on the response
+ * header so triage works end-to-end.
+ */
+function tracedError(
+	message: string,
+	status: number,
+	requestId: string,
+	extra?: Record<string, unknown>,
+): Response {
+	return new Response(
+		JSON.stringify({ error: message, requestId, ...extra }),
+		{
+			status,
+			headers: {
+				...defaultCorsHeaders,
+				"Content-Type": "application/json",
+				"x-gateway-request-id": requestId,
+			},
+		},
+	);
+}
 
 /**
  * Identity-injection allowlist. Background-agents accepts these fields as the
@@ -33,14 +57,18 @@ export async function handleProxy(
 	const authHeader = request.headers.get("Authorization");
 	if (!authHeader?.startsWith("Bearer ")) {
 		log.warn("proxy.unauthorized", { reason: "missing_bearer" });
-		return errorResponse("Unauthorized", 401);
+		return tracedError("Unauthorized", 401, log.context().requestId, {
+			code: "missing_bearer",
+		});
 	}
 
 	const appToken = authHeader.slice(7);
 	const user = await verifyAppJwt(env, appToken);
 	if (!user) {
 		log.warn("proxy.unauthorized", { reason: "invalid_token" });
-		return errorResponse("Invalid or expired token", 401);
+		return tracedError("Invalid or expired token", 401, log.context().requestId, {
+			code: "invalid_token",
+		});
 	}
 
 	const userLog = log.child({ userId: user.sub });
@@ -97,13 +125,11 @@ export async function handleProxy(
 		response = await userLog.startSpan("upstream.fetch", () => fetch(upstream));
 	} catch (err) {
 		userLog.error("proxy.upstream.fetch_failed", { error: errToFields(err) });
-		return json(
-			{
-				error: "Failed to reach control plane",
-				code: "upstream_unreachable",
-				requestId: log.context().requestId,
-			},
+		return tracedError(
+			"Failed to reach control plane",
 			502,
+			log.context().requestId,
+			{ code: "upstream_unreachable" },
 		);
 	}
 
@@ -123,15 +149,15 @@ export async function handleProxy(
 			bodyPreview: bodyText.slice(0, 500),
 		});
 		if (failureKind.kind !== "passthrough") {
-			return json(
+			return tracedError(
+				failureKind.message,
+				failureKind.status,
+				log.context().requestId,
 				{
-					error: failureKind.message,
 					code: failureKind.kind,
 					upstreamStatus: response.status,
-					requestId: log.context().requestId,
 					upstreamRequestId,
 				},
-				failureKind.status,
 			);
 		}
 		// passthrough: still preserve CORS + add upstream-request-id header
@@ -153,7 +179,14 @@ export async function handleProxy(
 			durationMs: Date.now() - t0,
 			sessionsReturned: filtered.sessions.length,
 		});
-		return json(filtered, 200);
+		return new Response(JSON.stringify(filtered), {
+			status: 200,
+			headers: {
+				...defaultCorsHeaders,
+				"Content-Type": "application/json",
+				"x-gateway-request-id": log.context().requestId,
+			},
+		});
 	}
 
 	const finalResponse = passthrough(response, log.context().requestId, upstreamRequestId);
@@ -228,17 +261,9 @@ function classifyUpstreamFailure(response: Response, bodyText: string): Upstream
 		}
 	}
 
-	// Anything 5xx from the control plane gets a structured envelope so the
-	// app can distinguish gateway/control-plane outages from real 4xx errors.
-	if (response.status >= 500) {
-		return {
-			kind: "control_plane_5xx",
-			status: 502,
-			message: "Control plane returned an internal error.",
-		};
-	}
-
-	// 1xxx Cloudflare HTML error pages on the upstream Worker.
+	// Cloudflare HTML error pages on the upstream Worker. Must run BEFORE the
+	// generic 5xx branch — 530 is technically 5xx but means "origin
+	// unreachable", which is a distinct triage signal for the client.
 	if (
 		response.status === 530 ||
 		(response.status === 403 && bodyText.startsWith("error code:"))
@@ -247,6 +272,16 @@ function classifyUpstreamFailure(response: Response, bodyText: string): Upstream
 			kind: "control_plane_unreachable",
 			status: 503,
 			message: "Control plane is unreachable.",
+		};
+	}
+
+	// Anything else 5xx from the control plane gets a structured envelope so
+	// the app can distinguish gateway/control-plane outages from real 4xx.
+	if (response.status >= 500) {
+		return {
+			kind: "control_plane_5xx",
+			status: 502,
+			message: "Control plane returned an internal error.",
 		};
 	}
 

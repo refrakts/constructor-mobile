@@ -199,6 +199,53 @@ describe("Gateway worker", () => {
 		expect(body.upstreamStatus).toBe(503);
 	});
 
+	it("classifies upstream 530 as control_plane_unreachable (not generic 5xx)", async () => {
+		const authEnv = testEnv();
+		const token = await appJwt(authEnv);
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(
+			new Response("error code: 1016", { status: 530, headers: { "Content-Type": "text/plain" } }),
+		);
+
+		const response = await handleProxy(new Request("https://gateway.example/sessions", {
+			headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+		}), authEnv, noopCtx);
+
+		expect(response.status).toBe(503);
+		const body = (await response.json()) as Record<string, unknown>;
+		expect(body.code).toBe("control_plane_unreachable");
+		expect(body.upstreamStatus).toBe(530);
+		expect(response.headers.get("x-gateway-request-id")).toBeTruthy();
+	});
+
+	it("returns structured 401 envelopes with requestId + header on auth failures", async () => {
+		const authEnv = testEnv();
+		const missingBearer = await handleProxy(
+			new Request("https://gateway.example/sessions", {
+				headers: { Accept: "application/json" },
+			}),
+			authEnv,
+			noopCtx,
+		);
+		expect(missingBearer.status).toBe(401);
+		expect(missingBearer.headers.get("x-gateway-request-id")).toBeTruthy();
+		const m = (await missingBearer.json()) as Record<string, unknown>;
+		expect(m.code).toBe("missing_bearer");
+		expect(typeof m.requestId).toBe("string");
+
+		const badToken = await handleProxy(
+			new Request("https://gateway.example/sessions", {
+				headers: { Authorization: "Bearer not-a-real-jwt", Accept: "application/json" },
+			}),
+			authEnv,
+			noopCtx,
+		);
+		expect(badToken.status).toBe(401);
+		expect(badToken.headers.get("x-gateway-request-id")).toBeTruthy();
+		const b = (await badToken.json()) as Record<string, unknown>;
+		expect(b.code).toBe("invalid_token");
+		expect(typeof b.requestId).toBe("string");
+	});
+
 	it("returns 502 when the upstream fetch throws", async () => {
 		const authEnv = testEnv();
 		const token = await appJwt(authEnv);

@@ -130,8 +130,20 @@ async function request<T>(
 
 	const text = await response.text();
 	if (!text) {
-		if (allowEmpty) return undefined as unknown as T;
-		return undefined as unknown as T;
+		// Empty 2xx body is fine only for 204 or when the caller opted in via
+		// `allowEmpty`. Anything else (e.g. an unexpected empty 200) is a
+		// gateway/control-plane contract violation; throw so the caller can
+		// surface it instead of silently treating it as success.
+		if (allowEmpty || response.status === 204) return undefined as unknown as T;
+		const gerr = new GatewayError({
+			kind: 'unknown',
+			status: response.status,
+			message: `Gateway returned an empty body for ${method} ${url}`,
+			url,
+			method,
+		});
+		captureException(gerr, { phase: 'empty_body' });
+		throw gerr;
 	}
 	try {
 		return JSON.parse(text) as T;
@@ -348,20 +360,30 @@ export class HttpSessionGateway implements SessionGateway {
 	async sendFollowUp(id: string, content: string): Promise<void> {
 		const token = await getToken(this.tokenKey);
 		if (!token) throw unauthenticated('POST /sessions/:id/prompt');
-		await request<unknown>('POST', `${this.baseUrl}/sessions/${id}/prompt`, {
-			headers: buildHeaders(token),
-			body: JSON.stringify({ content }),
-		});
+		await request<unknown>(
+			'POST',
+			`${this.baseUrl}/sessions/${id}/prompt`,
+			{
+				headers: buildHeaders(token),
+				body: JSON.stringify({ content }),
+			},
+			{ allowEmpty: true },
+		);
 		trackEvent('sessions.follow_up', { sessionId: id, length: content.length });
 	}
 
 	async stop(id: string): Promise<void> {
 		const token = await getToken(this.tokenKey);
 		if (!token) throw unauthenticated('POST /sessions/:id/stop');
-		await request<unknown>('POST', `${this.baseUrl}/sessions/${id}/stop`, {
-			headers: buildHeaders(token),
-			body: JSON.stringify({}),
-		});
+		await request<unknown>(
+			'POST',
+			`${this.baseUrl}/sessions/${id}/stop`,
+			{
+				headers: buildHeaders(token),
+				body: JSON.stringify({}),
+			},
+			{ allowEmpty: true },
+		);
 		trackEvent('sessions.stop', { sessionId: id });
 	}
 
