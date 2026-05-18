@@ -24,9 +24,20 @@ import { useCreateSession, useGateway } from '@/data/queries';
 import { Fonts, Spacing } from '@/constants/theme';
 import { AppBar, Button, Screen, TextField, useThemeColors } from '@/ui';
 
-import { effortLabel } from './reasoning-selector';
-
 const ACCENT = '#208AEF';
+
+const EFFORT_LABEL: Record<ReasoningEffort, string> = {
+  none: 'None',
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  xhigh: 'Extra High',
+  max: 'Max',
+};
+
+function effortLabel(effort: ReasoningEffort | undefined): string {
+  return effort ? EFFORT_LABEL[effort] : 'Auto';
+}
 
 function modelName(id: ValidModel): string {
   for (const group of MODEL_OPTIONS) {
@@ -56,6 +67,7 @@ export function CreateSessionScreen() {
     getDefaultReasoningEffort(DEFAULT_MODEL),
   );
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [createdSessionId, setCreatedSessionId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -80,22 +92,37 @@ export function CreateSessionScreen() {
     if (!canSubmit) return;
     setSubmitting(true);
     setError(null);
+    let sessionId = createdSessionId;
     try {
-      const res = await create.mutateAsync({
-        repoOwner: parsedRepo.owner,
-        repoName: parsedRepo.name,
-        title: titleFromPrompt(prompt),
-        branch: branch.trim() || undefined,
-        model,
-        reasoningEffort: effort || undefined,
-      });
-      await gateway.sendFollowUp(res.sessionId, prompt.trim());
-      router.replace({ pathname: '/s/[id]', params: { id: res.sessionId } });
+      if (!sessionId) {
+        const res = await create.mutateAsync({
+          repoOwner: parsedRepo.owner,
+          repoName: parsedRepo.name,
+          title: titleFromPrompt(prompt),
+          branch: branch.trim() || undefined,
+          model,
+          reasoningEffort: effort || undefined,
+        });
+        sessionId = res.sessionId;
+        setCreatedSessionId(sessionId);
+      }
+      await gateway.sendFollowUp(sessionId, prompt.trim());
+      router.replace({ pathname: '/s/[id]', params: { id: sessionId } });
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not start the session.');
+      const message = e instanceof Error ? e.message : 'Network request failed.';
+      setError(
+        sessionId
+          ? `Session was created, but the prompt was not sent. Retry will send it to the existing session. ${message}`
+          : message,
+      );
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const openCreatedSession = () => {
+    if (!createdSessionId) return;
+    router.replace({ pathname: '/s/[id]', params: { id: createdSessionId } });
   };
 
   return (
@@ -239,10 +266,18 @@ export function CreateSessionScreen() {
           ) : null}
 
           <Button
-            title={submitting ? 'Starting session...' : 'Start session'}
+            title={submitting ? 'Starting session...' : createdSessionId ? 'Retry sending prompt' : 'Start session'}
             onPress={submit}
             disabled={!canSubmit}
           />
+          {createdSessionId ? (
+            <Button
+              title="Open created session"
+              variant="ghost"
+              onPress={openCreatedSession}
+              disabled={submitting}
+            />
+          ) : null}
           <Button
             title="Cancel"
             variant="ghost"
