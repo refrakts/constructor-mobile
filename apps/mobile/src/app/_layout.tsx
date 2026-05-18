@@ -35,7 +35,7 @@ function StackNav() {
       <Stack.Screen name="settings" options={{ title: 'Settings' }} />
       <Stack.Protected guard={signedIn}>
         <Stack.Screen name="index" options={{ title: 'Sessions' }} />
-        <Stack.Screen name="new" options={{ title: 'New session', ...SHEET }} />
+        <Stack.Screen name="new" options={{ title: 'New session' }} />
         <Stack.Screen name="s/[id]" options={{ title: 'Session' }} />
       </Stack.Protected>
       <Stack.Protected guard={!signedIn}>

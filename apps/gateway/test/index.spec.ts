@@ -4,8 +4,10 @@ import {
 	waitOnExecutionContext,
 	SELF,
 } from "cloudflare:test";
+import { SignJWT } from "jose";
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { handleAuthCallback } from "../src/auth";
+import { handleProxy } from "../src/proxy";
 import worker from "../src/index";
 import type { GatewayEnv } from "../src/types";
 
@@ -30,6 +32,35 @@ function testEnv(): GatewayEnv {
 			},
 		} as unknown as KVNamespace,
 	};
+}
+
+async function appJwt(authEnv: GatewayEnv): Promise<string> {
+	await authEnv.GATEWAY_KV.put("app-session:test-session", JSON.stringify({
+		scmUserId: "123",
+		scmLogin: "octocat",
+		scmName: "Octo Cat",
+		scmEmail: "octo@example.com",
+		scmToken: "gh-token",
+	}));
+	const key = await crypto.subtle.importKey(
+		"raw",
+		new TextEncoder().encode(authEnv.APP_JWT_SIGNING_KEY),
+		{ name: "HMAC", hash: "SHA-256" },
+		false,
+		["sign", "verify"],
+	);
+	return new SignJWT({
+		sessionId: "test-session",
+		scmUserId: "123",
+		scmLogin: "octocat",
+		scmName: "Octo Cat",
+		scmEmail: "octo@example.com",
+	})
+		.setProtectedHeader({ alg: "HS256" })
+		.setSubject("123")
+		.setIssuedAt()
+		.setExpirationTime("1h")
+		.sign(key);
 }
 
 describe("Gateway worker", () => {
@@ -120,5 +151,50 @@ describe("Gateway worker", () => {
 		expect(response.status).toBe(302);
 		expect(response.headers.get("location")).toContain("mobile://auth/callback?token=");
 		expect(fetchSpy).toHaveBeenCalledTimes(3);
+	});
+
+	it("reports a misconfigured control plane worker clearly", async () => {
+		const authEnv = testEnv();
+		const token = await appJwt(authEnv);
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({
+			cloudflare_error: true,
+			error_code: 1042,
+			detail: "No Workers script was found for this host on workers.dev.",
+		}, { status: 404 }));
+
+		const response = await handleProxy(new Request("https://gateway.example/sessions", {
+			headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+		}), authEnv);
+
+		expect(response.status).toBe(502);
+		expect(await response.json()).toEqual({
+			error: "Control plane worker is unavailable: No Workers script was found for this host on workers.dev.",
+		});
+	});
+
+	it("does not forward gateway-specific headers to the control plane", async () => {
+		const authEnv = testEnv();
+		const token = await appJwt(authEnv);
+		const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ sessions: [] }));
+
+		const response = await handleProxy(new Request("https://gateway.example/sessions", {
+			headers: {
+				Authorization: `Bearer ${token}`,
+				Accept: "application/json",
+				Host: "gateway.example",
+				"CF-Ray": "test-ray",
+				"X-Forwarded-Proto": "https",
+			},
+		}), authEnv);
+
+		expect(response.status).toBe(200);
+		expect(fetchSpy).toHaveBeenCalledTimes(1);
+		const upstream = fetchSpy.mock.calls[0][0] as Request;
+		expect(upstream.url).toBe("https://control.example/sessions");
+		expect(upstream.headers.has("Host")).toBe(false);
+		expect(upstream.headers.has("CF-Ray")).toBe(false);
+		expect(upstream.headers.has("X-Forwarded-Proto")).toBe(false);
+		expect(upstream.headers.get("Authorization")).not.toBe(`Bearer ${token}`);
+		expect(upstream.headers.get("Authorization")).toMatch(/^Bearer /);
 	});
 });

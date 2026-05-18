@@ -44,7 +44,7 @@ export function AuthCallbackScreen() {
   return (
     <Screen>
       <View style={styles.body}>
-        <ActivityIndicator color={c.tint} />
+        <ActivityIndicator color="#208AEF" />
         <Text style={[styles.text, { color: c.textSecondary }]}>Completing sign-in...</Text>
       </View>
     </Screen>
@@ -56,10 +56,10 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: Spacing.md,
+    gap: Spacing.three,
   },
   text: {
-    fontFamily: Fonts.body,
+    fontFamily: Fonts.sans,
     fontSize: 15,
   },
 });
