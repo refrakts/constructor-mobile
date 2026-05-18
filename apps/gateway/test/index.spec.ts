@@ -6,12 +6,13 @@ import {
 } from "cloudflare:test";
 import { SignJWT } from "jose";
 import { afterEach, describe, it, expect, vi } from "vitest";
-import { handleAuthCallback } from "../src/auth";
+import { handleAuthCallback, handleAuthSessionDelete, verifyAppJwt } from "../src/auth";
 import { handleProxy } from "../src/proxy";
 import worker from "../src/index";
 import type { GatewayEnv } from "../src/types";
 
 const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
+const TEST_STATE = "test-state-123456";
 
 function testEnv(): GatewayEnv {
 	const kv = new Map<string, string>();
@@ -58,6 +59,8 @@ async function appJwt(authEnv: GatewayEnv): Promise<string> {
 	})
 		.setProtectedHeader({ alg: "HS256" })
 		.setSubject("123")
+		.setIssuer("constructor-gateway")
+		.setAudience("constructor-mobile")
 		.setIssuedAt()
 		.setExpirationTime("1h")
 		.sign(key);
@@ -117,7 +120,7 @@ describe("Gateway worker", () => {
 
 	it("sends required GitHub API headers when fetching OAuth user details", async () => {
 		const authEnv = testEnv();
-		await authEnv.GATEWAY_KV.put("pkce:test-state", JSON.stringify({
+		await authEnv.GATEWAY_KV.put(`pkce:${TEST_STATE}`, JSON.stringify({
 			verifier: "verifier",
 			appRedirectUri: "mobile://auth/callback",
 		}));
@@ -133,18 +136,18 @@ describe("Gateway worker", () => {
 				expect(headers.get("Accept")).toBe("application/vnd.github+json");
 				expect(headers.get("User-Agent")).toBe("constructor-gateway");
 				expect(headers.get("X-GitHub-Api-Version")).toBe("2022-11-28");
-				return Response.json({ id: 123, login: "octocat", name: "Octo Cat", email: "octo@example.com" });
+				return Response.json({ id: 123, login: "octocat", name: "Octo Cat", email: null });
 			}
 			if (url === "https://api.github.com/user/emails") {
 				const headers = new Headers(init?.headers);
 				expect(headers.get("User-Agent")).toBe("constructor-gateway");
-				return Response.json([]);
+				return Response.json([{ email: "octo@example.com", primary: true, verified: true }]);
 			}
 			throw new Error(`Unexpected fetch: ${url}`);
 		});
 
 		const response = await handleAuthCallback(
-			new Request("https://gateway.example/auth/callback?code=code&state=test-state"),
+			new Request(`https://gateway.example/auth/callback?code=code&state=${TEST_STATE}`),
 			authEnv,
 		);
 
@@ -152,7 +155,6 @@ describe("Gateway worker", () => {
 		expect(response.headers.get("location")).toContain("mobile://auth/callback?token=");
 		expect(fetchSpy).toHaveBeenCalledTimes(3);
 	});
-
 	it("reports a misconfigured control plane worker clearly", async () => {
 		const authEnv = testEnv();
 		const token = await appJwt(authEnv);
@@ -196,5 +198,83 @@ describe("Gateway worker", () => {
 		expect(upstream.headers.has("X-Forwarded-Proto")).toBe(false);
 		expect(upstream.headers.get("Authorization")).not.toBe(`Bearer ${token}`);
 		expect(upstream.headers.get("Authorization")).toMatch(/^Bearer /);
+	});
+
+	it("stores null email instead of fabricating a noreply address", async () => {
+		const authEnv = testEnv();
+		await authEnv.GATEWAY_KV.put(`pkce:${TEST_STATE}`, JSON.stringify({
+			verifier: "verifier",
+			appRedirectUri: "mobile://auth/callback",
+		}));
+		vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+			const url = typeof input === "string" ? input : input.url;
+			if (url === "https://github.com/login/oauth/access_token") {
+				return Response.json({ access_token: "gh-token", scope: "repo,user" });
+			}
+			if (url === "https://api.github.com/user") {
+				return Response.json({ id: 123, login: "octocat", name: "Octo Cat", email: null });
+			}
+			if (url === "https://api.github.com/user/emails") {
+				return Response.json([]);
+			}
+			throw new Error(`Unexpected fetch: ${url}`);
+		});
+
+		const response = await handleAuthCallback(
+			new Request(`https://gateway.example/auth/callback?code=code&state=${TEST_STATE}`),
+			authEnv,
+		);
+		const location = response.headers.get("location");
+		const token = location ? new URL(location).searchParams.get("token") : null;
+
+		expect(token).toBeTruthy();
+		expect(await verifyAppJwt(authEnv, token!)).toMatchObject({ scmEmail: null });
+	});
+
+	it("rejects corrupted OAuth sessions", async () => {
+		const authEnv = testEnv();
+		await authEnv.GATEWAY_KV.put(`pkce:${TEST_STATE}`, "not-json");
+
+		const response = await handleAuthCallback(
+			new Request(`https://gateway.example/auth/callback?code=code&state=${TEST_STATE}`),
+			authEnv,
+		);
+
+		expect(response.status).toBe(400);
+		expect(await response.json()).toEqual({ error: "Invalid or expired session" });
+	});
+
+	it("revokes the app session on logout", async () => {
+		const authEnv = testEnv();
+		await authEnv.GATEWAY_KV.put(`pkce:${TEST_STATE}`, JSON.stringify({
+			verifier: "verifier",
+			appRedirectUri: "mobile://auth/callback",
+		}));
+		vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+			const url = typeof input === "string" ? input : input.url;
+			if (url === "https://github.com/login/oauth/access_token") {
+				return Response.json({ access_token: "gh-token", scope: "repo,user" });
+			}
+			if (url === "https://api.github.com/user") {
+				return Response.json({ id: 123, login: "octocat", name: "Octo Cat", email: "octo@example.com" });
+			}
+			throw new Error(`Unexpected fetch: ${url}`);
+		});
+
+		const callback = await handleAuthCallback(
+			new Request(`https://gateway.example/auth/callback?code=code&state=${TEST_STATE}`),
+			authEnv,
+		);
+		const location = callback.headers.get("location");
+		const token = location ? new URL(location).searchParams.get("token") : null;
+		expect(await verifyAppJwt(authEnv, token!)).not.toBeNull();
+
+		const logout = await handleAuthSessionDelete(new Request("https://gateway.example/auth/session", {
+			method: "DELETE",
+			headers: { Authorization: `Bearer ${token}` },
+		}), authEnv);
+
+		expect(logout.status).toBe(204);
+		expect(await verifyAppJwt(authEnv, token!)).toBeNull();
 	});
 });

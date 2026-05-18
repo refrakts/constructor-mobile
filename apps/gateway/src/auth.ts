@@ -1,6 +1,6 @@
 import { jwtVerify, SignJWT } from "jose";
 import type { GatewayEnv } from "./types";
-import { errorResponse } from "./index";
+import { corsHeaders, errorResponse } from "./index";
 
 const GITHUB_AUTH_URL = "https://github.com/login/oauth/authorize";
 const GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token";
@@ -14,6 +14,9 @@ const GITHUB_API_HEADERS = {
 
 const PKCE_TTL_SECONDS = 600; // 10 minutes
 const JWT_TTL_SECONDS = 24 * 60 * 60; // 24 hours
+const SESSION_TTL_SECONDS = JWT_TTL_SECONDS + 300;
+const JWT_ISSUER = "constructor-gateway";
+const JWT_AUDIENCE = "constructor-mobile";
 
 interface PkceSession {
 	verifier: string;
@@ -25,9 +28,26 @@ const ALLOWED_APP_REDIRECT = "mobile://auth/callback";
 function generateCodeVerifier(): string {
 	const arr = new Uint8Array(64);
 	crypto.getRandomValues(arr);
-	return Array.from(arr)
-		.map((b) => b.toString(16).padStart(2, "0"))
-		.join("");
+	return encodeBase64Url(arr);
+}
+
+function encodeBase64Url(bytes: Uint8Array): string {
+	return btoa(String.fromCharCode(...bytes))
+		.replace(/\+/g, "-")
+		.replace(/\//g, "_")
+		.replace(/=+$/, "");
+}
+
+function parseJson<T>(raw: string): T | null {
+	try {
+		return JSON.parse(raw) as T;
+	} catch {
+		return null;
+	}
+}
+
+function isSafeState(state: string): boolean {
+	return /^[A-Za-z0-9._~-]{16,128}$/.test(state);
 }
 
 async function generateCodeChallenge(verifier: string): Promise<string> {
@@ -48,6 +68,9 @@ export async function handleAuthStart(request: Request, env: GatewayEnv): Promis
 
 	if (!appRedirectUri) {
 		return errorResponse("redirect_uri is required", 400);
+	}
+	if (!isSafeState(state)) {
+		return errorResponse("state is invalid", 400);
 	}
 	if (appRedirectUri !== ALLOWED_APP_REDIRECT) {
 		return errorResponse("redirect_uri is not allowed", 400);
@@ -81,12 +104,19 @@ export async function handleAuthCallback(request: Request, env: GatewayEnv): Pro
 	if (!code || !state) {
 		return errorResponse("Missing code or state", 400);
 	}
+	if (!isSafeState(state)) {
+		return errorResponse("state is invalid", 400);
+	}
 
 	const sessionRaw = await env.GATEWAY_KV.get(`pkce:${state}`);
 	if (!sessionRaw) {
 		return errorResponse("Invalid or expired session", 400);
 	}
-	const session = JSON.parse(sessionRaw) as PkceSession;
+	const session = parseJson<PkceSession>(sessionRaw);
+	if (!session) {
+		await env.GATEWAY_KV.delete(`pkce:${state}`);
+		return errorResponse("Invalid or expired session", 400);
+	}
 	await env.GATEWAY_KV.delete(`pkce:${state}`);
 
 	// Exchange code for GitHub access token
@@ -122,14 +152,9 @@ export async function handleAuthCallback(request: Request, env: GatewayEnv): Pro
 	const ghToken = tokenData.access_token;
 
 	// Fetch GitHub user profile
-	const [userRes, emailsRes] = await Promise.all([
-		fetch(GITHUB_USER_URL, {
-			headers: { ...GITHUB_API_HEADERS, Authorization: `Bearer ${ghToken}` },
-		}),
-		fetch(GITHUB_EMAILS_URL, {
-			headers: { ...GITHUB_API_HEADERS, Authorization: `Bearer ${ghToken}` },
-		}),
-	]);
+	const userRes = await fetch(GITHUB_USER_URL, {
+		headers: { ...GITHUB_API_HEADERS, Authorization: `Bearer ${ghToken}` },
+	});
 
 	if (!userRes.ok) {
 		console.error("GitHub /user failed", {
@@ -148,10 +173,21 @@ export async function handleAuthCallback(request: Request, env: GatewayEnv): Pro
 	};
 
 	let email = user.email;
-	if (!email && emailsRes.ok) {
-		const emails = (await emailsRes.json()) as Array<{ email: string; primary: boolean; verified: boolean }>;
-		const primary = emails.find((e) => e.primary && e.verified);
-		if (primary) email = primary.email;
+	if (!email) {
+		const emailsRes = await fetch(GITHUB_EMAILS_URL, {
+			headers: { ...GITHUB_API_HEADERS, Authorization: `Bearer ${ghToken}` },
+		});
+		if (emailsRes.ok) {
+			const emails = (await emailsRes.json()) as Array<{ email: string; primary: boolean; verified: boolean }>;
+			const primary = emails.find((e) => e.primary && e.verified);
+			if (primary) email = primary.email;
+		} else {
+			console.error("GitHub /user/emails failed", {
+				status: emailsRes.status,
+				body: (await emailsRes.text()).slice(0, 500),
+				scope: tokenData.scope,
+			});
+		}
 	}
 
 	// Issue app JWT
@@ -160,10 +196,10 @@ export async function handleAuthCallback(request: Request, env: GatewayEnv): Pro
 		scmUserId: String(user.id),
 		scmLogin: user.login,
 		scmName: user.name || user.login,
-		scmEmail: email || `${user.id}+${user.login}@users.noreply.github.com`,
+		scmEmail: email ?? null,
 		scmToken: ghToken,
 	} satisfies StoredAppSession), {
-		expirationTtl: JWT_TTL_SECONDS,
+		expirationTtl: SESSION_TTL_SECONDS,
 	});
 	const jwt = await signAppJwt(env, {
 		sub: String(user.id),
@@ -171,7 +207,7 @@ export async function handleAuthCallback(request: Request, env: GatewayEnv): Pro
 		scmUserId: String(user.id),
 		scmLogin: user.login,
 		scmName: user.name || user.login,
-		scmEmail: email || `${user.id}+${user.login}@users.noreply.github.com`,
+		scmEmail: email ?? null,
 	});
 
 	// Redirect back to app
@@ -182,19 +218,31 @@ export async function handleAuthCallback(request: Request, env: GatewayEnv): Pro
 	return Response.redirect(redirect.toString(), 302);
 }
 
-export interface JwtPayload {
+export async function handleAuthSessionDelete(request: Request, env: GatewayEnv): Promise<Response> {
+	const authHeader = request.headers.get("Authorization");
+	if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+	const user = await verifyAppJwt(env, authHeader.slice(7));
+	if (!user) return errorResponse("Invalid or expired token", 401);
+	await env.GATEWAY_KV.delete(`app-session:${user.sessionId}`);
+	return new Response(null, { status: 204, headers: corsHeaders });
+}
+
+export interface AppJwtPayload {
 	sub: string;
 	sessionId: string;
 	scmUserId: string;
 	scmLogin: string;
 	scmName: string;
-	scmEmail: string;
+	scmEmail: string | null;
+}
+
+export interface AuthenticatedUser extends AppJwtPayload {
 	scmToken: string;
 }
 
-type StoredAppSession = Omit<JwtPayload, "sub" | "sessionId">;
+type StoredAppSession = Omit<AuthenticatedUser, "sub" | "sessionId">;
 
-async function signAppJwt(env: GatewayEnv, payload: Omit<JwtPayload, "scmToken">): Promise<string> {
+async function signAppJwt(env: GatewayEnv, payload: AppJwtPayload): Promise<string> {
 	const key = await importJwk(env.APP_JWT_SIGNING_KEY);
 	return new SignJWT({
 		sessionId: payload.sessionId,
@@ -205,23 +253,28 @@ async function signAppJwt(env: GatewayEnv, payload: Omit<JwtPayload, "scmToken">
 	})
 		.setProtectedHeader({ alg: "HS256" })
 		.setSubject(payload.sub)
+		.setIssuer(JWT_ISSUER)
+		.setAudience(JWT_AUDIENCE)
 		.setIssuedAt()
-		.setExpirationTime(`${JWT_TTL_SECONDS}s`)
+		.setExpirationTime("24h")
 		.sign(key);
 }
 
-export async function verifyAppJwt(env: GatewayEnv, token: string): Promise<JwtPayload | null> {
+export async function verifyAppJwt(env: GatewayEnv, token: string): Promise<AuthenticatedUser | null> {
 	try {
 		const key = await importJwk(env.APP_JWT_SIGNING_KEY);
 		const { payload } = await jwtVerify(token, key, {
 			algorithms: ["HS256"],
 			clockTolerance: 60,
+			issuer: JWT_ISSUER,
+			audience: JWT_AUDIENCE,
 		});
 		const sessionId = payload.sessionId as string | undefined;
-		if (!sessionId) return null;
+		if (!payload.sub || !sessionId) return null;
 		const sessionRaw = await env.GATEWAY_KV.get(`app-session:${sessionId}`);
 		if (!sessionRaw) return null;
-		const session = JSON.parse(sessionRaw) as StoredAppSession;
+		const session = parseJson<StoredAppSession>(sessionRaw);
+		if (!session) return null;
 		return {
 			sub: payload.sub as string,
 			sessionId,
