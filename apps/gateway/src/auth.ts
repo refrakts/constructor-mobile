@@ -6,6 +6,11 @@ const GITHUB_AUTH_URL = "https://github.com/login/oauth/authorize";
 const GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token";
 const GITHUB_USER_URL = "https://api.github.com/user";
 const GITHUB_EMAILS_URL = "https://api.github.com/user/emails";
+const GITHUB_API_HEADERS = {
+	Accept: "application/vnd.github+json",
+	"User-Agent": "constructor-gateway",
+	"X-GitHub-Api-Version": "2022-11-28",
+};
 
 const PKCE_TTL_SECONDS = 600; // 10 minutes
 const JWT_TTL_SECONDS = 24 * 60 * 60; // 24 hours
@@ -107,6 +112,7 @@ export async function handleAuthCallback(request: Request, env: GatewayEnv): Pro
 	const tokenData = (await tokenRes.json()) as {
 		access_token?: string;
 		error?: string;
+		scope?: string;
 	};
 
 	if (tokenData.error || !tokenData.access_token) {
@@ -118,14 +124,19 @@ export async function handleAuthCallback(request: Request, env: GatewayEnv): Pro
 	// Fetch GitHub user profile
 	const [userRes, emailsRes] = await Promise.all([
 		fetch(GITHUB_USER_URL, {
-			headers: { Authorization: `Bearer ${ghToken}`, Accept: "application/vnd.github+json" },
+			headers: { ...GITHUB_API_HEADERS, Authorization: `Bearer ${ghToken}` },
 		}),
 		fetch(GITHUB_EMAILS_URL, {
-			headers: { Authorization: `Bearer ${ghToken}`, Accept: "application/vnd.github+json" },
+			headers: { ...GITHUB_API_HEADERS, Authorization: `Bearer ${ghToken}` },
 		}),
 	]);
 
 	if (!userRes.ok) {
+		console.error("GitHub /user failed", {
+			status: userRes.status,
+			body: (await userRes.text()).slice(0, 500),
+			scope: tokenData.scope,
+		});
 		return errorResponse("Failed to fetch GitHub user", 502);
 	}
 
