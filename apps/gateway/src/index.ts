@@ -11,11 +11,11 @@
  *   GET|POST /sessions/...    → HMAC-signed proxy to control plane with user injection
  */
 
-import { jwtVerify, SignJWT } from "jose";
 import type { GatewayEnv } from "./types";
 import { handleConfig } from "./config";
 import { handleAuthStart, handleAuthCallback } from "./auth";
 import { handleProxy } from "./proxy";
+import { handlePushRegister, pollAndSendPushNotifications } from "./push";
 
 export type { GatewayEnv } from "./types";
 
@@ -25,6 +25,10 @@ export default {
 		const path = url.pathname;
 
 		try {
+			if (request.method === "OPTIONS") {
+				return handleOptions(request);
+			}
+
 			if (path === "/config") {
 				return handleConfig(request, env);
 			}
@@ -37,6 +41,10 @@ export default {
 				return handleAuthCallback(request, env);
 			}
 
+			if (path === "/push/register" && request.method === "POST") {
+				return handlePushRegister(request, env);
+			}
+
 			if (path.startsWith("/sessions")) {
 				return handleProxy(request, env);
 			}
@@ -47,12 +55,30 @@ export default {
 			return json({ error: "Internal server error" }, 500);
 		}
 	},
+
+	async scheduled(_controller: ScheduledController, env: GatewayEnv, ctx: ExecutionContext): Promise<void> {
+		ctx.waitUntil(pollAndSendPushNotifications(env));
+	},
 } satisfies ExportedHandler<GatewayEnv>;
+
+export const corsHeaders = {
+	"Access-Control-Allow-Origin": "*",
+	"Access-Control-Allow-Methods": "GET,HEAD,POST,PUT,PATCH,OPTIONS",
+	"Access-Control-Allow-Headers": "Authorization,Content-Type,Accept",
+	"Access-Control-Max-Age": "86400",
+};
+
+export function handleOptions(request: Request): Response {
+	if (request.headers.get("Origin") && request.headers.get("Access-Control-Request-Method")) {
+		return new Response(null, { headers: corsHeaders });
+	}
+	return new Response(null, { headers: { Allow: "GET, HEAD, POST, PUT, PATCH, OPTIONS" } });
+}
 
 export function json(body: unknown, status = 200): Response {
 	return Response.json(body, {
 		status,
-		headers: { "Access-Control-Allow-Origin": "*" },
+		headers: corsHeaders,
 	});
 }
 

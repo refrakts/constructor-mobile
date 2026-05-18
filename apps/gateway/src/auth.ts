@@ -1,6 +1,6 @@
 import { jwtVerify, SignJWT } from "jose";
 import type { GatewayEnv } from "./types";
-import { errorResponse, json } from "./index";
+import { errorResponse } from "./index";
 
 const GITHUB_AUTH_URL = "https://github.com/login/oauth/authorize";
 const GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token";
@@ -14,6 +14,8 @@ interface PkceSession {
 	verifier: string;
 	appRedirectUri: string;
 }
+
+const ALLOWED_APP_REDIRECT = "mobile://auth/callback";
 
 function generateCodeVerifier(): string {
 	const arr = new Uint8Array(64);
@@ -41,6 +43,9 @@ export async function handleAuthStart(request: Request, env: GatewayEnv): Promis
 
 	if (!appRedirectUri) {
 		return errorResponse("redirect_uri is required", 400);
+	}
+	if (appRedirectUri !== ALLOWED_APP_REDIRECT) {
+		return errorResponse("redirect_uri is not allowed", 400);
 	}
 
 	const verifier = generateCodeVerifier();
@@ -77,6 +82,7 @@ export async function handleAuthCallback(request: Request, env: GatewayEnv): Pro
 		return errorResponse("Invalid or expired session", 400);
 	}
 	const session = JSON.parse(sessionRaw) as PkceSession;
+	await env.GATEWAY_KV.delete(`pkce:${state}`);
 
 	// Exchange code for GitHub access token
 	const tokenRes = await fetch(GITHUB_TOKEN_URL, {
@@ -138,24 +144,36 @@ export async function handleAuthCallback(request: Request, env: GatewayEnv): Pro
 	}
 
 	// Issue app JWT
-	const jwt = await signAppJwt(env, {
-		sub: String(user.id),
+	const sessionId = crypto.randomUUID();
+	await env.GATEWAY_KV.put(`app-session:${sessionId}`, JSON.stringify({
 		scmUserId: String(user.id),
 		scmLogin: user.login,
 		scmName: user.name || user.login,
 		scmEmail: email || `${user.id}+${user.login}@users.noreply.github.com`,
 		scmToken: ghToken,
+	} satisfies StoredAppSession), {
+		expirationTtl: JWT_TTL_SECONDS,
+	});
+	const jwt = await signAppJwt(env, {
+		sub: String(user.id),
+		sessionId,
+		scmUserId: String(user.id),
+		scmLogin: user.login,
+		scmName: user.name || user.login,
+		scmEmail: email || `${user.id}+${user.login}@users.noreply.github.com`,
 	});
 
 	// Redirect back to app
 	const redirect = new URL(session.appRedirectUri);
 	redirect.searchParams.set("token", jwt);
+	redirect.searchParams.set("state", state);
 
 	return Response.redirect(redirect.toString(), 302);
 }
 
-interface JwtPayload {
+export interface JwtPayload {
 	sub: string;
+	sessionId: string;
 	scmUserId: string;
 	scmLogin: string;
 	scmName: string;
@@ -163,14 +181,16 @@ interface JwtPayload {
 	scmToken: string;
 }
 
-async function signAppJwt(env: GatewayEnv, payload: JwtPayload): Promise<string> {
+type StoredAppSession = Omit<JwtPayload, "sub" | "sessionId">;
+
+async function signAppJwt(env: GatewayEnv, payload: Omit<JwtPayload, "scmToken">): Promise<string> {
 	const key = await importJwk(env.APP_JWT_SIGNING_KEY);
 	return new SignJWT({
+		sessionId: payload.sessionId,
 		scmUserId: payload.scmUserId,
 		scmLogin: payload.scmLogin,
 		scmName: payload.scmName,
 		scmEmail: payload.scmEmail,
-		scmToken: payload.scmToken,
 	})
 		.setProtectedHeader({ alg: "HS256" })
 		.setSubject(payload.sub)
@@ -186,13 +206,19 @@ export async function verifyAppJwt(env: GatewayEnv, token: string): Promise<JwtP
 			algorithms: ["HS256"],
 			clockTolerance: 60,
 		});
+		const sessionId = payload.sessionId as string | undefined;
+		if (!sessionId) return null;
+		const sessionRaw = await env.GATEWAY_KV.get(`app-session:${sessionId}`);
+		if (!sessionRaw) return null;
+		const session = JSON.parse(sessionRaw) as StoredAppSession;
 		return {
 			sub: payload.sub as string,
-			scmUserId: payload.scmUserId as string,
-			scmLogin: payload.scmLogin as string,
-			scmName: payload.scmName as string,
-			scmEmail: payload.scmEmail as string,
-			scmToken: payload.scmToken as string,
+			sessionId,
+			scmUserId: session.scmUserId,
+			scmLogin: session.scmLogin,
+			scmName: session.scmName,
+			scmEmail: session.scmEmail,
+			scmToken: session.scmToken,
 		};
 	} catch {
 		return null;

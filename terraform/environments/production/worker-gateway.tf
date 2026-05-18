@@ -14,11 +14,12 @@ resource "null_resource" "gateway_build" {
 module "gateway_worker" {
   source = "../../modules/cloudflare-worker"
 
-  account_id          = var.cloudflare_account_id
-  worker_name         = local.worker_name
-  script_path         = local.gateway_script_path
-  compatibility_date  = var.compatibility_date
-  compatibility_flags = var.compatibility_flags
+  account_id            = var.cloudflare_account_id
+  worker_name           = local.worker_name
+  workers_dev_subdomain = var.workers_dev_subdomain
+  script_path           = local.gateway_script_path
+  compatibility_date    = var.compatibility_date
+  compatibility_flags   = var.compatibility_flags
 
   kv_namespaces = [
     {
@@ -37,7 +38,6 @@ module "gateway_worker" {
     { name = "INTERNAL_CALLBACK_SECRET", value = var.internal_callback_secret },
     { name = "GITHUB_OAUTH_CLIENT_SECRET", value = var.github_oauth_client_secret },
     { name = "APP_JWT_SIGNING_KEY", value = var.app_jwt_signing_key },
-    { name = "EXPO_ACCESS_TOKEN", value = var.expo_access_token },
   ]
 
   cron_triggers = var.push_cron
