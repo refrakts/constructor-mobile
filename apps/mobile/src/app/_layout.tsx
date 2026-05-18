@@ -30,6 +30,8 @@ function StackNav() {
         contentStyle: { backgroundColor: c.background },
       }}
     >
+      <Stack.Screen name="auth/callback" options={{ headerShown: false }} />
+      <Stack.Screen name="callback" options={{ headerShown: false }} />
       <Stack.Screen name="settings" options={{ title: 'Settings' }} />
       <Stack.Protected guard={signedIn}>
         <Stack.Screen name="index" options={{ title: 'Sessions' }} />

@@ -14,10 +14,10 @@ import { Button, Screen, useThemeColors } from '@/ui';
 import { Fonts, Spacing } from '@/constants/theme';
 
 import { BrandBackdrop } from './brand-backdrop';
+import { PENDING_STATE_KEY } from './constants';
 import { GitHubMark } from './github-mark';
 
 const ACCENT = '#208AEF';
-const PENDING_STATE_KEY = 'constructor.auth.pending_state';
 
 export function SignInScreen() {
   const { signIn } = useAuth();
