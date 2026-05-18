@@ -21,6 +21,7 @@ import {
   type ValidModel,
 } from '@constructor/protocol';
 import { useCreateSession, useGateway } from '@/data/queries';
+import { GatewayError } from '@/data/errors';
 import { Fonts, Spacing } from '@/constants/theme';
 import { AppBar, Button, Screen, TextField, useThemeColors } from '@/ui';
 
@@ -109,11 +110,16 @@ export function CreateSessionScreen() {
       await gateway.sendFollowUp(sessionId, prompt.trim());
       router.replace({ pathname: '/s/[id]', params: { id: sessionId } });
     } catch (e) {
-      const message = e instanceof Error ? e.message : 'Network request failed.';
+      const friendly =
+        e instanceof GatewayError
+          ? e.userMessage() + (e.requestId ? ` (request ${e.requestId})` : '')
+          : e instanceof Error
+            ? e.message
+            : 'Network request failed.';
       setError(
         sessionId
-          ? `Session was created, but the prompt was not sent. Retry will send it to the existing session. ${message}`
-          : message,
+          ? `Session was created, but the prompt was not sent. Retry will send it to the existing session. ${friendly}`
+          : friendly,
       );
     } finally {
       setSubmitting(false);

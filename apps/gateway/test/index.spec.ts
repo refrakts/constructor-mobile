@@ -6,8 +6,14 @@ import {
 } from "cloudflare:test";
 import { SignJWT } from "jose";
 import { afterEach, describe, it, expect, vi } from "vitest";
-import { handleAuthCallback, handleAuthSessionDelete, verifyAppJwt } from "../src/auth";
+import { handleAuthCallback, handleAuthRefresh, handleAuthSessionDelete, verifyAppJwt } from "../src/auth";
 import { handleProxy } from "../src/proxy";
+
+const noopCtx: ExecutionContext = {
+	waitUntil: () => {},
+	passThroughOnException: () => {},
+	props: {},
+};
 import worker from "../src/index";
 import type { GatewayEnv } from "../src/types";
 
@@ -166,12 +172,45 @@ describe("Gateway worker", () => {
 
 		const response = await handleProxy(new Request("https://gateway.example/sessions", {
 			headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
-		}), authEnv);
+		}), authEnv, noopCtx);
 
 		expect(response.status).toBe(502);
-		expect(await response.json()).toEqual({
-			error: "Control plane worker is unavailable: No Workers script was found for this host on workers.dev.",
-		});
+		const body = (await response.json()) as Record<string, unknown>;
+		expect(body.code).toBe("control_plane_unavailable");
+		expect(body.error).toBe("No Workers script was found for this host on workers.dev.");
+		expect(body.upstreamStatus).toBe(404);
+		expect(typeof body.requestId).toBe("string");
+	});
+
+	it("returns a structured 502 envelope for upstream 5xx errors", async () => {
+		const authEnv = testEnv();
+		const token = await appJwt(authEnv);
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(
+			new Response("boom", { status: 503, headers: { "Content-Type": "text/plain" } }),
+		);
+
+		const response = await handleProxy(new Request("https://gateway.example/sessions", {
+			headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+		}), authEnv, noopCtx);
+
+		expect(response.status).toBe(502);
+		const body = (await response.json()) as Record<string, unknown>;
+		expect(body.code).toBe("control_plane_5xx");
+		expect(body.upstreamStatus).toBe(503);
+	});
+
+	it("returns 502 when the upstream fetch throws", async () => {
+		const authEnv = testEnv();
+		const token = await appJwt(authEnv);
+		vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("network down"));
+
+		const response = await handleProxy(new Request("https://gateway.example/sessions", {
+			headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+		}), authEnv, noopCtx);
+
+		expect(response.status).toBe(502);
+		const body = (await response.json()) as Record<string, unknown>;
+		expect(body.code).toBe("upstream_unreachable");
 	});
 
 	it("does not forward gateway-specific headers to the control plane", async () => {
@@ -187,7 +226,7 @@ describe("Gateway worker", () => {
 				"CF-Ray": "test-ray",
 				"X-Forwarded-Proto": "https",
 			},
-		}), authEnv);
+		}), authEnv, noopCtx);
 
 		expect(response.status).toBe(200);
 		expect(fetchSpy).toHaveBeenCalledTimes(1);
@@ -198,6 +237,84 @@ describe("Gateway worker", () => {
 		expect(upstream.headers.has("X-Forwarded-Proto")).toBe(false);
 		expect(upstream.headers.get("Authorization")).not.toBe(`Bearer ${token}`);
 		expect(upstream.headers.get("Authorization")).toMatch(/^Bearer /);
+		expect(upstream.headers.get("x-trace-id")).toBeTruthy();
+		expect(upstream.headers.get("x-request-id")).toBeTruthy();
+		expect(upstream.headers.get("x-forwarded-user")).toBe("123");
+	});
+
+	it("filters GET /sessions to only the calling user's sessions", async () => {
+		const authEnv = testEnv();
+		const token = await appJwt(authEnv);
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({
+			sessions: [
+				{ id: "a", userId: "123", title: "mine" },
+				{ id: "b", userId: "999", title: "someone else" },
+				{ id: "c", ownerUserId: "123", title: "also mine" },
+				{ id: "d", title: "ambient (no owner)" },
+			],
+		}));
+
+		const response = await handleProxy(new Request("https://gateway.example/sessions", {
+			headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+		}), authEnv, noopCtx);
+
+		expect(response.status).toBe(200);
+		const body = (await response.json()) as { sessions: Array<{ id: string }>; total: number; hasMore: boolean };
+		expect(body.sessions.map((s) => s.id)).toEqual(["a", "c"]);
+		expect(body.total).toBe(2);
+		expect(body.hasMore).toBe(false);
+	});
+
+	it("enriches POST /sessions/:id/prompt but not POST /sessions/:id/stop", async () => {
+		const authEnv = testEnv();
+		const token = await appJwt(authEnv);
+		const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ ok: true }));
+
+		await handleProxy(new Request("https://gateway.example/sessions/s_1/prompt", {
+			method: "POST",
+			headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+			body: JSON.stringify({ content: "hello" }),
+		}), authEnv, noopCtx);
+
+		await handleProxy(new Request("https://gateway.example/sessions/s_1/stop", {
+			method: "POST",
+			headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+		}), authEnv, noopCtx);
+
+		const promptBody = await (fetchSpy.mock.calls[0][0] as Request).json();
+		expect(promptBody).toMatchObject({ content: "hello", userId: "123", scmLogin: "octocat" });
+
+		const stopBody = await (fetchSpy.mock.calls[1][0] as Request).json();
+		expect(stopBody).toEqual({}); // no enrichment, no extra fields
+	});
+
+	it("issues a fresh JWT via /auth/refresh when the current token is still valid", async () => {
+		const authEnv = testEnv();
+		const token = await appJwt(authEnv);
+
+		const response = await handleAuthRefresh(new Request("https://gateway.example/auth/refresh", {
+			method: "POST",
+			headers: { Authorization: `Bearer ${token}` },
+		}), authEnv);
+
+		expect(response.status).toBe(200);
+		const body = (await response.json()) as { token: string };
+		expect(typeof body.token).toBe("string");
+		expect(body.token).not.toBe(token);
+		expect(await verifyAppJwt(authEnv, body.token)).toMatchObject({ scmLogin: "octocat" });
+	});
+
+	it("rejects /auth/refresh when the KV session is gone", async () => {
+		const authEnv = testEnv();
+		const token = await appJwt(authEnv);
+		await authEnv.GATEWAY_KV.delete("app-session:test-session");
+
+		const response = await handleAuthRefresh(new Request("https://gateway.example/auth/refresh", {
+			method: "POST",
+			headers: { Authorization: `Bearer ${token}` },
+		}), authEnv);
+
+		expect(response.status).toBe(401);
 	});
 
 	it("stores null email instead of fabricating a noreply address", async () => {

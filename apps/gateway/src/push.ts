@@ -62,7 +62,9 @@ export async function handlePushRegister(request: Request, env: GatewayEnv): Pro
 }
 
 export async function recordUserSessions(env: GatewayEnv, user: AuthenticatedUser, body: unknown): Promise<void> {
-	const sessions = Array.isArray((body as { sessions?: unknown }).sessions) ? (body as { sessions: Session[] }).sessions : [];
+	const sessions = Array.isArray((body as { sessions?: unknown })?.sessions)
+		? (body as { sessions: Session[] }).sessions
+		: [];
 	if (sessions.length === 0) return;
 	const registry = await loadRegistry(env, user);
 	for (const session of sessions.slice(0, MAX_TRACKED_SESSIONS_PER_USER)) {

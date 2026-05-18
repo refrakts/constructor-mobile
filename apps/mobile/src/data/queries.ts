@@ -1,6 +1,6 @@
 /** The only data entry points screens use. Lists go through TanStack Query;
  *  the live stream uses the ported pure transforms over the gateway. */
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import type { CreateSessionRequest, SandboxEvent, SessionState } from '@constructor/protocol';
@@ -45,6 +45,10 @@ export interface SessionStream {
   state: SessionState | null;
   events: SandboxEvent[];
   cost: number;
+  /** Reason for the most recent close, if any. */
+  closeReason: string | null;
+  /** Force a fresh subscribe attempt; safe to call from a UI button. */
+  reconnect: () => void;
 }
 
 export function useSessionStream(id: string): SessionStream {
@@ -53,6 +57,8 @@ export function useSessionStream(id: string): SessionStream {
   const [state, setState] = useState<SessionState | null>(null);
   const [events, setEvents] = useState<SandboxEvent[]>([]);
   const [cost, setCost] = useState(0);
+  const [closeReason, setCloseReason] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
   const pending = useRef<PendingToken | null>(null);
 
   useEffect(() => {
@@ -62,21 +68,28 @@ export function useSessionStream(id: string): SessionStream {
     setState(null);
     setEvents([]);
     setCost(0);
+    setCloseReason(null);
     const handle = gw.subscribe(id, {
       snapshot: (snap) => {
         setState(snap.state);
         setEvents(collapseTokenEvents(snap.replay.events, pending));
         setStatus('live');
+        setCloseReason(null);
       },
       event: (e) => {
         setEvents((prev) => foldEvent(prev, e, pending));
         const d = costDelta(e);
         if (d) setCost((c) => c + d);
       },
-      closed: () => setStatus('closed'),
+      closed: (reason) => {
+        setStatus('closed');
+        if (reason) setCloseReason(reason);
+      },
     });
     return () => handle.unsubscribe();
-  }, [gw, id]);
+  }, [gw, id, attempt]);
 
-  return { status, state, events, cost };
+  const reconnect = useCallback(() => setAttempt((n) => n + 1), []);
+
+  return { status, state, events, cost, closeReason, reconnect };
 }
