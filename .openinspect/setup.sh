@@ -14,3 +14,9 @@ pnpm install --frozen-lockfile
 
 info "Building gateway to warm generated artifacts"
 pnpm --filter gateway build
+
+info "Exporting Expo iOS bundle to warm Metro artifacts"
+CI=1 EXPO_NO_TELEMETRY=1 pnpm --filter mobile exec expo export --platform ios
+
+info "Exporting Expo Android bundle to warm Metro artifacts"
+CI=1 EXPO_NO_TELEMETRY=1 pnpm --filter mobile exec expo export --platform android
