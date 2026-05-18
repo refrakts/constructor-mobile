@@ -26,12 +26,17 @@ export type Profile = {
   id: string;
   name: string;
   gatewayUrl: string;
-  /** Discovered later from the gateway (GET /config) — never user-entered. */
+  /** Discovered from the gateway's GET /config — never user-entered. */
   wsUrl?: string;
+  /** GitHub OAuth client id returned by GET /config — used for login. */
+  githubOAuthClientId?: string;
 };
 
 /** Fields the user actually edits in the UI. */
 export type ProfileDraft = { name: string; gatewayUrl: string };
+
+/** Discovered config from a gateway — written back into the profile. */
+export type ProfileConfig = { wsUrl: string; githubOAuthClientId: string };
 
 type State = {
   profiles: Profile[];
@@ -41,13 +46,14 @@ type State = {
 type Action =
   | { type: 'add'; profile: Profile }
   | { type: 'update'; id: string; draft: ProfileDraft }
+  | { type: 'setConfig'; id: string; config: ProfileConfig }
   | { type: 'remove'; id: string }
   | { type: 'setActive'; id: string };
 
-let _seq = 0;
+import { randomUUID } from 'expo-crypto';
+
 function makeId(): string {
-  _seq += 1;
-  return `p_${Date.now().toString(36)}_${_seq.toString(36)}`;
+  return `p_${randomUUID()}`;
 }
 
 const SEED: State = (() => {
@@ -103,6 +109,18 @@ function reducer(state: State, action: Action): State {
       );
       return { ...state, profiles };
     }
+    case 'setConfig': {
+      const profiles = state.profiles.map((p) =>
+        p.id === action.id
+          ? {
+              ...p,
+              wsUrl: action.config.wsUrl,
+              githubOAuthClientId: action.config.githubOAuthClientId,
+            }
+          : p,
+      );
+      return { ...state, profiles };
+    }
     case 'remove': {
       const profiles = state.profiles.filter((p) => p.id !== action.id);
       let activeProfileId = state.activeProfileId;
@@ -126,6 +144,7 @@ type ProfileStore = {
   activeProfile: Profile | null;
   addProfile: (draft: ProfileDraft) => Profile;
   updateProfile: (id: string, draft: ProfileDraft) => void;
+  setProfileConfig: (id: string, config: ProfileConfig) => void;
   removeProfile: (id: string) => void;
   setActiveProfile: (id: string) => void;
 };
@@ -163,6 +182,10 @@ export function ProfileStoreProvider({
     dispatch({ type: 'update', id, draft });
   }, []);
 
+  const setProfileConfig = useCallback((id: string, config: ProfileConfig) => {
+    dispatch({ type: 'setConfig', id, config });
+  }, []);
+
   const removeProfile = useCallback((id: string) => {
     dispatch({ type: 'remove', id });
   }, []);
@@ -180,10 +203,11 @@ export function ProfileStoreProvider({
       activeProfile,
       addProfile,
       updateProfile,
+      setProfileConfig,
       removeProfile,
       setActiveProfile,
     };
-  }, [state, addProfile, updateProfile, removeProfile, setActiveProfile]);
+  }, [state, addProfile, updateProfile, setProfileConfig, removeProfile, setActiveProfile]);
 
   return (
     <ProfileStoreContext.Provider value={value}>
