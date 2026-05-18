@@ -1,15 +1,13 @@
-/** Phase-1 slice owner: auth. Visual shell only — real OAuth is M1 (gated on
- *  deployment + a mobile GitHub OAuth App). The primary action is a MOCK that
- *  routes to '/'; no expo-auth-session, no real GitHub flow here. The in-progress
- *  state below is cosmetic so the screen feels production-real on Expo Go.
- *
- *  Visual richness is built from `@/ui` primitives + RN core only: no
- *  expo-linear-gradient / react-native-svg (not in the manifest, no new deps). */
+/** Real GitHub OAuth sign-in via the gateway (PKCE). Uses expo-web-browser
+ *  to open the gateway's /auth/start endpoint, then catches the deep-link
+ *  callback `mobile://auth/callback?token=...` via expo-linking. */
 import React from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
-import { Stack } from 'expo-router';
+import { ActivityIndicator, Alert, Linking, StyleSheet, Text, View } from 'react-native';
+import { Stack, useRouter } from 'expo-router';
+import * as WebBrowser from 'expo-web-browser';
 
 import { useAuth } from '@/data/auth';
+import { useProfileStore } from '@/features/profiles/profile-store';
 import { Button, Screen, useThemeColors } from '@/ui';
 import { Fonts, Spacing } from '@/constants/theme';
 
@@ -20,33 +18,64 @@ const ACCENT = '#208AEF';
 
 export function SignInScreen() {
   const { signIn } = useAuth();
+  const router = useRouter();
   const c = useThemeColors();
+  const { activeProfile } = useProfileStore();
   const [signingIn, setSigningIn] = React.useState(false);
 
-  const timer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-  React.useEffect(() => () => {
-    if (timer.current) clearTimeout(timer.current);
-  }, []);
+  // Listen for deep-link callback
+  React.useEffect(() => {
+    const sub = Linking.addEventListener('url', ({ url }) => {
+      if (url.startsWith('mobile://auth/callback')) {
+        WebBrowser.dismissBrowser();
+        const parsed = new URL(url);
+        const token = parsed.searchParams.get('token');
+        if (token) {
+          signIn(token);
+        } else {
+          Alert.alert('Sign-in failed', 'Could not complete authentication.');
+          setSigningIn(false);
+        }
+      }
+    });
+    return () => sub.remove();
+  }, [signIn]);
 
-  // Mock-only: brief cosmetic "connecting" beat, then route home. The real
-  // GitHub OAuth handshake replaces this body wholesale in M1.
-  const onContinue = React.useCallback(() => {
-    if (signingIn) return;
+  // Also check for initial URL (cold-start deep link)
+  React.useEffect(() => {
+    Linking.getInitialURL().then((url) => {
+      if (url && url.startsWith('mobile://auth/callback')) {
+        const parsed = new URL(url);
+        const token = parsed.searchParams.get('token');
+        if (token) signIn(token);
+      }
+    });
+  }, [signIn]);
+
+  const onContinue = React.useCallback(async () => {
+    if (!activeProfile) {
+      Alert.alert('No connection', 'Add a gateway connection in Settings first.');
+      return;
+    }
+    if (!activeProfile.githubOAuthClientId) {
+      Alert.alert('No OAuth config', 'This gateway has not returned a GitHub OAuth client id. Check the connection URL.');
+      return;
+    }
     setSigningIn(true);
-    // Flip mock auth; the router's Stack.Protected gate reveals the app and
-    // resolves to the `index` anchor.
-    timer.current = setTimeout(signIn, 550);
-  }, [signIn, signingIn]);
+    try {
+      const gatewayUrl = activeProfile.gatewayUrl.replace(/\/$/, '');
+      const authUrl = `${gatewayUrl}/auth/start?redirect_uri=mobile://auth/callback`;
+      await WebBrowser.openBrowserAsync(authUrl);
+    } catch {
+      setSigningIn(false);
+    }
+  }, [activeProfile]);
 
   return (
     <Screen>
-      {/* Per-screen override only — does not touch the frozen src/app layout;
-          keeps the modal presentation, drops the stock "Sign in" header so the
-          brand lockup reads as the hero. */}
       <Stack.Screen options={{ headerShown: false }} />
       <BrandBackdrop />
       <View style={styles.body}>
-        {/* --- Brand lockup -------------------------------------------------- */}
         <View style={styles.lockup}>
           <View style={[styles.appMark, { borderColor: c.backgroundSelected }]}>
             <Text style={styles.appMarkGlyph}>C</Text>
@@ -57,10 +86,8 @@ export function SignInScreen() {
           </Text>
         </View>
 
-        {/* --- Spacer ------------------------------------------------------- */}
         <View style={styles.flexGap} />
 
-        {/* --- Auth affordance ---------------------------------------------- */}
         <View style={styles.authBlock}>
           <View
             style={[
@@ -86,12 +113,21 @@ export function SignInScreen() {
             disabled={signingIn}
           />
 
-          <Text style={[styles.statusCaption, { color: c.textSecondary }]}>
-            Mock sign-in · real GitHub OAuth lands in M1
-          </Text>
+          {!activeProfile ? (
+            <Text style={[styles.statusCaption, { color: c.textSecondary }]}>
+              Add a gateway connection in Settings to sign in.
+            </Text>
+          ) : !activeProfile.githubOAuthClientId ? (
+            <Text style={[styles.statusCaption, { color: c.textSecondary }]}>
+              Gateway config not discovered yet. Pull to refresh or re-add the connection.
+            </Text>
+          ) : (
+            <Text style={[styles.statusCaption, { color: c.textSecondary }]}>
+              Authenticating via {activeProfile.name}
+            </Text>
+          )}
         </View>
 
-        {/* --- Legal footnote ----------------------------------------------- */}
         <Text style={[styles.legal, { color: c.textSecondary }]}>
           By continuing you agree to the Terms of Service and acknowledge the Privacy Policy.
         </Text>
@@ -107,7 +143,6 @@ const styles = StyleSheet.create({
     paddingTop: Spacing.six,
     paddingBottom: Spacing.four,
   },
-  // Brand lockup
   lockup: { alignItems: 'center', gap: Spacing.three },
   appMark: {
     width: 76,
@@ -145,8 +180,6 @@ const styles = StyleSheet.create({
     maxWidth: 280,
   },
   flexGap: { flex: 1, minHeight: Spacing.five },
-  // Auth block — the @/ui Button supplies its own marginTop (Spacing.four),
-  // so no extra gap here keeps the provider row → button rhythm tight.
   authBlock: {},
   providerRow: {
     flexDirection: 'row',
@@ -174,7 +207,6 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.sans,
     marginTop: Spacing.two,
   },
-  // Legal
   legal: {
     fontSize: 11,
     lineHeight: 16,

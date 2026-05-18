@@ -57,7 +57,7 @@ export function Composer({
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+      keyboardVerticalOffset={0}
     >
       <View
         style={[
@@ -92,9 +92,6 @@ export function Composer({
             multiline
             maxLength={4000}
             editable={!sending}
-            onSubmitEditing={send}
-            blurOnSubmit={false}
-            returnKeyType="send"
           />
         </View>
 

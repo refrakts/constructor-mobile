@@ -1,9 +1,11 @@
-/** Wires the gateway seam + TanStack Query. Swap `defaultGateway` for the real
- *  HTTP/WS impl later — nothing else changes. */
+/** Wires the gateway seam + TanStack Query. Swaps MockSessionGateway for
+ *  HttpSessionGateway when the active profile is real. Auth token is read from
+ *  secure store by HttpSessionGateway on every request. */
 import React, { createContext, useContext, useMemo } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import type { SessionGateway } from './gateway';
+import { HttpSessionGateway } from './gateway/http';
 import { MockSessionGateway } from './mock/mock-gateway';
 import { AuthProvider } from './auth';
 
@@ -17,13 +19,23 @@ export function useGateway(): SessionGateway {
 
 export function AppProviders({
   children,
-  gateway,
+  gatewayUrl,
 }: {
   children: React.ReactNode;
-  gateway?: SessionGateway;
+  gatewayUrl?: string;
 }) {
-  const client = useMemo(() => new QueryClient({ defaultOptions: { queries: { retry: 1, staleTime: 5_000 } } }), []);
-  const gw = useMemo(() => gateway ?? new MockSessionGateway(), [gateway]);
+  const client = useMemo(
+    () => new QueryClient({ defaultOptions: { queries: { retry: 1, staleTime: 5_000 } } }),
+    [],
+  );
+
+  const gw = useMemo<SessionGateway>(() => {
+    if (gatewayUrl && !gatewayUrl.startsWith('mock://')) {
+      return new HttpSessionGateway(gatewayUrl.replace(/\/$/, ''));
+    }
+    return new MockSessionGateway();
+  }, [gatewayUrl]);
+
   return (
     <QueryClientProvider client={client}>
       <AuthProvider>
