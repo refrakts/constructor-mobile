@@ -27,6 +27,7 @@ import { useRouter } from 'expo-router';
 
 import type { Session, SessionStatus } from '@constructor/protocol';
 import { useSessions } from '@/data/queries';
+import { GatewayError } from '@/data/errors';
 import {
   AppBar,
   Badge,
@@ -166,8 +167,19 @@ function SessionGroupCard({
 
 export function SessionListScreen() {
   const router = useRouter();
-  const { data, isLoading, isError, refetch } = useSessions();
+  const { data, isLoading, isError, error, refetch } = useSessions();
   const [refreshing, setRefreshing] = useState(false);
+
+  const errorTitle = isError
+    ? error instanceof GatewayError
+      ? error.userMessage()
+      : 'Couldn’t load sessions'
+    : null;
+  const errorHint = isError
+    ? error instanceof GatewayError && error.requestId
+      ? `Request ${error.requestId}. Pull down to refresh, or tap Try again.`
+      : 'Pull down to refresh, or tap Try again.'
+    : null;
 
   const groups = useMemo(() => groupSessions(data ?? []), [data]);
 
@@ -221,8 +233,8 @@ export function SessionListScreen() {
             {isError ? (
               <View style={s.stateBlock}>
                 <EmptyState
-                  title="Couldn’t load sessions"
-                  hint="Pull down to refresh, or tap Try again."
+                  title={errorTitle ?? 'Couldn’t load sessions'}
+                  hint={errorHint ?? 'Pull down to refresh, or tap Try again.'}
                 />
                 <View style={s.stateAction}>
                   <Button title="Try again" variant="ghost" onPress={onRefresh} />

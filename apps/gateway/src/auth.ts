@@ -227,6 +227,100 @@ export async function handleAuthSessionDelete(request: Request, env: GatewayEnv)
 	return new Response(null, { status: 204, headers: corsHeaders });
 }
 
+/**
+ * Re-issue an app JWT for the same KV-backed session. The KV record is the
+ * source of truth for revocation (logging out deletes it); as long as it
+ * exists, a fresh 24h JWT can be minted from it. This lets the mobile client
+ * stay logged in across multi-day usage without forcing a re-OAuth.
+ *
+ * Auth: the caller presents their CURRENT (possibly close-to-expiry) JWT. We
+ * verify it normally; if expired by less than the grace window, we still
+ * accept it for refresh purposes (clockTolerance handles small drift; expired
+ * tokens fail `jwtVerify` entirely so the grace path is the explicit branch).
+ */
+export async function handleAuthRefresh(request: Request, env: GatewayEnv): Promise<Response> {
+	const authHeader = request.headers.get("Authorization");
+	if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+	const presented = authHeader.slice(7);
+
+	// 1) Fast path: token still valid → re-issue immediately.
+	const valid = await verifyAppJwt(env, presented);
+	if (valid) {
+		const fresh = await signAppJwt(env, {
+			sub: valid.sub,
+			sessionId: valid.sessionId,
+			scmUserId: valid.scmUserId,
+			scmLogin: valid.scmLogin,
+			scmName: valid.scmName,
+			scmEmail: valid.scmEmail,
+		});
+		// Touch the KV TTL so a sliding window applies.
+		const stored: StoredAppSession = {
+			scmUserId: valid.scmUserId,
+			scmLogin: valid.scmLogin,
+			scmName: valid.scmName,
+			scmEmail: valid.scmEmail,
+			scmToken: valid.scmToken,
+		};
+		await env.GATEWAY_KV.put(`app-session:${valid.sessionId}`, JSON.stringify(stored), {
+			expirationTtl: SESSION_TTL_SECONDS,
+		});
+		return new Response(JSON.stringify({ token: fresh }), {
+			status: 200,
+			headers: { ...corsHeaders, "Content-Type": "application/json" },
+		});
+	}
+
+	// 2) Slow path: token expired (but otherwise well-formed and signed by us).
+	// We still call `jwtVerify` — signature, issuer, and audience are all
+	// enforced — but allow up to 7 days past `exp` via a wide `clockTolerance`.
+	// That bounds the offline window without forcing daily re-OAuth, while
+	// keeping the signing key + issuer/audience as the trust root. Anything
+	// that fails signature, iss, or aud is rejected. If KV no longer holds
+	// the session record we also reject (logout invalidates this path).
+	const grace = await refreshFromExpiredToken(env, presented);
+	if (grace) return grace;
+
+	return errorResponse("Invalid or expired token", 401);
+}
+
+async function refreshFromExpiredToken(env: GatewayEnv, presented: string): Promise<Response | null> {
+	try {
+		const key = await importJwk(env.APP_JWT_SIGNING_KEY);
+		const { payload } = await jwtVerify(presented, key, {
+			algorithms: ["HS256"],
+			issuer: JWT_ISSUER,
+			audience: JWT_AUDIENCE,
+			// Allow up to 7 days past expiry for graceful refresh. This bounds
+			// the offline window without forcing daily re-OAuth.
+			clockTolerance: 7 * 24 * 60 * 60,
+		});
+		const sessionId = payload.sessionId as string | undefined;
+		if (!payload.sub || !sessionId) return null;
+		const sessionRaw = await env.GATEWAY_KV.get(`app-session:${sessionId}`);
+		if (!sessionRaw) return null;
+		const session = parseJson<StoredAppSession>(sessionRaw);
+		if (!session) return null;
+		const fresh = await signAppJwt(env, {
+			sub: payload.sub as string,
+			sessionId,
+			scmUserId: session.scmUserId,
+			scmLogin: session.scmLogin,
+			scmName: session.scmName,
+			scmEmail: session.scmEmail,
+		});
+		await env.GATEWAY_KV.put(`app-session:${sessionId}`, JSON.stringify(session), {
+			expirationTtl: SESSION_TTL_SECONDS,
+		});
+		return new Response(JSON.stringify({ token: fresh }), {
+			status: 200,
+			headers: { ...corsHeaders, "Content-Type": "application/json" },
+		});
+	} catch {
+		return null;
+	}
+}
+
 export interface AppJwtPayload {
 	sub: string;
 	sessionId: string;

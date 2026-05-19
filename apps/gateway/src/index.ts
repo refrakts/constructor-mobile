@@ -5,59 +5,76 @@
  * plane. No changes are made to background-agents — all transforms happen here.
  *
  * Endpoints:
- *   GET  /config              → public config (controlPlaneUrl, wsUrl, githubOAuthClientId)
- *   GET  /auth/start          → begins GitHub OAuth PKCE flow
- *   GET  /auth/callback       → GitHub OAuth callback, issues app JWT
- *   DELETE /auth/session      → revokes the current app JWT session
- *   GET|POST /sessions/...    → HMAC-signed proxy to control plane with user injection
+ *   GET    /config              → public config (controlPlaneUrl, wsUrl, githubOAuthClientId)
+ *   GET    /auth/start          → begins GitHub OAuth PKCE flow
+ *   GET    /auth/callback       → GitHub OAuth callback, issues app JWT
+ *   POST   /auth/refresh        → re-issues an app JWT for the same KV session
+ *   DELETE /auth/session        → revokes the current app JWT session
+ *   GET|POST /sessions/...      → HMAC-signed proxy to control plane with user injection
  */
 
 import type { GatewayEnv } from "./types";
 import { handleConfig } from "./config";
-import { handleAuthStart, handleAuthCallback, handleAuthSessionDelete } from "./auth";
+import {
+	handleAuthStart,
+	handleAuthCallback,
+	handleAuthRefresh,
+	handleAuthSessionDelete,
+} from "./auth";
 import { handleProxy } from "./proxy";
 import { handlePushRegister, pollAndSendPushNotifications } from "./push";
+import { buildTraceContext, createLogger, errToFields } from "./logger";
 
 export type { GatewayEnv } from "./types";
 
 export default {
-	async fetch(request: Request, env: GatewayEnv, _ctx: ExecutionContext): Promise<Response> {
+	async fetch(request: Request, env: GatewayEnv, ctx: ExecutionContext): Promise<Response> {
+		const log = createLogger(buildTraceContext(request));
+		const t0 = Date.now();
 		const url = new URL(request.url);
 		const path = url.pathname;
 
+		log.info("request.start");
+
 		try {
+			let response: Response;
 			if (request.method === "OPTIONS") {
-				return handleOptions(request);
+				response = handleOptions(request);
+			} else if (path === "/config") {
+				response = handleConfig(request, env);
+			} else if (path === "/auth/start") {
+				response = await handleAuthStart(request, env);
+			} else if (path === "/auth/callback") {
+				response = await handleAuthCallback(request, env);
+			} else if (path === "/auth/refresh" && request.method === "POST") {
+				response = await handleAuthRefresh(request, env);
+			} else if (path === "/auth/session" && request.method === "DELETE") {
+				response = await handleAuthSessionDelete(request, env);
+			} else if (path === "/push/register" && request.method === "POST") {
+				response = await handlePushRegister(request, env);
+			} else if (path.startsWith("/sessions")) {
+				response = await handleProxy(request, env, ctx);
+			} else {
+				response = json({ error: "Not found" }, 404);
 			}
 
-			if (path === "/config") {
-				return handleConfig(request, env);
-			}
-
-			if (path === "/auth/start") {
-				return handleAuthStart(request, env);
-			}
-
-			if (path === "/auth/callback") {
-				return handleAuthCallback(request, env);
-			}
-
-			if (path === "/auth/session" && request.method === "DELETE") {
-				return handleAuthSessionDelete(request, env);
-			}
-
-			if (path === "/push/register" && request.method === "POST") {
-				return handlePushRegister(request, env);
-			}
-
-			if (path.startsWith("/sessions")) {
-				return handleProxy(request, env);
-			}
-
-			return json({ error: "Not found" }, 404);
+			log.info("request.end", {
+				status: response.status,
+				durationMs: Date.now() - t0,
+			});
+			return response;
 		} catch (e) {
-			console.error("Gateway error:", e);
-			return json({ error: "Internal server error" }, 500);
+			log.error("request.unhandled", {
+				durationMs: Date.now() - t0,
+				error: errToFields(e),
+			});
+			return json(
+				{
+					error: "Internal server error",
+					requestId: log.context().requestId,
+				},
+				500,
+			);
 		}
 	},
 

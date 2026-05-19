@@ -46,7 +46,7 @@ export function SessionDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const c = useThemeColors();
   const gw = useGateway();
-  const { status, state, events, cost } = useSessionStream(id);
+  const { status, state, events, cost, closeReason, reconnect } = useSessionStream(id);
 
   const listRef = useRef<FlashListRef<SandboxEvent>>(null);
   const [atBottom, setAtBottom] = useState(true);
@@ -178,9 +178,21 @@ export function SessionDetailScreen() {
         <Composer onSend={sendFollowUp} onStop={stop} />
       ) : (
         <View style={[s.closedBar, { borderTopColor: c.backgroundSelected }]}>
-          <Text style={[s.closedText, { color: c.textSecondary }]}>
-            {status === 'closed' ? 'Session ended' : 'Not connected'}
+          <Text style={[s.closedText, { color: c.textSecondary }]} numberOfLines={2}>
+            {status === 'closed'
+              ? closeReason
+                ? `Disconnected: ${closeReason}`
+                : 'Session ended'
+              : 'Not connected'}
           </Text>
+          <Pressable
+            onPress={reconnect}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel="Reconnect to session"
+          >
+            <Text style={[s.reconnect, { color: '#208AEF' }]}>Reconnect</Text>
+          </Pressable>
         </View>
       )}
     </Screen>
@@ -212,8 +224,13 @@ const s = StyleSheet.create({
   jumpText: { color: '#ffffff', fontSize: 13, fontWeight: '700' },
   closedBar: {
     paddingVertical: Spacing.three,
+    paddingHorizontal: Spacing.three,
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: Spacing.three,
     borderTopWidth: StyleSheet.hairlineWidth,
   },
-  closedText: { fontSize: 13, fontWeight: '500' },
+  closedText: { fontSize: 13, fontWeight: '500', flex: 1 },
+  reconnect: { fontSize: 13, fontWeight: '700' },
 });
